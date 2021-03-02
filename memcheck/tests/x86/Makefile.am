@@ -13,6 +13,7 @@ EXTRA_DIST = \
 	$(addsuffix .stderr.exp,$(INSN_TESTS)) \
 	$(addsuffix .stdout.exp,$(INSN_TESTS)) \
 	$(addsuffix .vgtest,$(INSN_TESTS)) \
+	pcmpgtd.stderr.exp pcmpgtd.vgtest \
 	pushfpopf.stderr.exp pushfpopf.stdout.exp pushfpopf.vgtest \
 	pushfw_x86.vgtest pushfw_x86.stdout.exp pushfw_x86.stderr.exp \
 	pushpopmem.stderr.exp pushpopmem.stdout.exp pushpopmem.vgtest \
@@ -37,6 +38,7 @@ check_PROGRAMS = \
 	fprem \
 	fxsave \
 	more_x86_fp \
+	pcmpgtd \
 	pushfpopf \
 	pushfw_x86 \
 	pushpopmem \
@@ -52,6 +54,11 @@ AM_CCASFLAGS += @FLAG_M32@
 
 # fpeflags must use these flags -- bug only occurred with them.
 fpeflags_CFLAGS		= $(AM_CFLAGS) -march=i686
+
+# pcmpgtd failure only occurs with clang version >= 10 and -O2
+pcmpgtd_SOURCES	= pcmpgtd.c
+pcmpgtd_CFLAGS		= -O2
+
 pushfpopf_SOURCES 	= pushfpopf_c.c pushfpopf_s.S
 if VGCONF_OS_IS_DARWIN
 pushpopmem_CFLAGS 	= $(AM_CFLAGS) -mdynamic-no-pic

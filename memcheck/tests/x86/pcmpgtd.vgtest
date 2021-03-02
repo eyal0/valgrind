@@ -1,0 +1,2 @@
+prog: pcmpgtd
+prereq: test -e pcmpgtd
