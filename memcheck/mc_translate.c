@@ -1287,6 +1287,92 @@ static IRAtom* expensiveCmpEQorNE ( MCEnv*  mce,
    return final_cast;
 }
 
+/* Check if we can know, despite the uncertain bits, that xx is greater than yy.
+   We can combine xx and vxx to create two values: the largest that xx could
+   possibly be and the smallest that xx could possibly be.  Likewise, we can do
+   the same for yy.  We'll call those max_xx and min_xx and max_yy and min_yy.
+
+   If max_xx is is not greater than min_yy then xx can't possibly be greater
+   than yy so we know our answer for sure.  If min_xx is greater than max_yy
+   then xx is definitely greater than yy.  For all other cases, we can't know.
+
+   For unsigned it's easy to make the min and max: Just set the unknown bits to
+   all 0s or all 1s.  For signed it's harder because having a 1 in the MSB makes
+   a number smaller!  It's tricky because the first bit is the sign bit.  We can
+   work around this by changing from 2's complement numbers to biased numbers.
+   We just need to xor the MSB of the inputs with 1.  Then we can treat the
+   values as if unsigned.
+ */
+static IRAtom* expensiveCmpGT ( MCEnv*  mce,
+                                unsigned int word_size,
+                                Bool is_signed,
+                                unsigned int count,
+                                IRAtom* vxx, IRAtom* vyy,
+                                IRAtom* xx,  IRAtom* yy )
+{
+   IROp   opAND, opOR, opXOR, opNOT, opEQ, opSHL, opGT;
+   IRType ty;
+
+   tl_assert(isShadowAtom(mce,vxx));
+   tl_assert(isShadowAtom(mce,vyy));
+   tl_assert(isOriginalAtom(mce,xx));
+   tl_assert(isOriginalAtom(mce,yy));
+   tl_assert(sameKindedAtoms(vxx,xx));
+   tl_assert(sameKindedAtoms(vyy,yy));
+
+   switch (word_size * count) {
+      case 128:
+         ty = Ity_V128;
+         opAND = Iop_AndV128;
+         opOR   = Iop_OrV128;
+         opXOR  = Iop_XorV128;
+         opNOT  = Iop_NotV128;
+         break;
+      default:
+         VG_(tool_panic)("expensiveCmpGT");
+   }
+   if (word_size == 32 && count == 4) {
+      opEQ = Iop_CmpEQ32x4;
+      opSHL = Iop_ShlN32x4;
+      if (is_signed) {
+         opGT = Iop_CmpGT32Sx4;
+      } else {
+         opGT = Iop_CmpGT32Ux4;
+      }
+   } else {
+      VG_(tool_panic)("expensiveCmpGT");
+   }
+   IRAtom *MSBs;
+   if (is_signed) {
+      IRAtom *const0 = mkV128(0);
+      IRAtom *all_ones = assignNew('V', mce, ty, binop(opEQ, const0, const0));
+      MSBs = assignNew('V', mce, ty, binop(opSHL, all_ones, mkU8(31)));
+      vxx = assignNew('V', mce, ty, binop(opXOR, vxx, MSBs));
+      vyy = assignNew('V', mce, ty, binop(opXOR, vyy, MSBs));
+      // From here on out, we're dealing with biased integers instead of 2's
+      // complement.
+   }
+   IRAtom *not_vxx = assignNew('V', mce, ty, unop(opNOT, vxx));
+   IRAtom *not_vyy = assignNew('V', mce, ty, unop(opNOT, vyy));
+   IRAtom *max_xx = assignNew('V', mce, ty, binop(opOR, xx, vxx));
+   IRAtom *min_xx = assignNew('V', mce, ty, binop(opAND, xx, not_vxx));
+   IRAtom *max_yy = assignNew('V', mce, ty, binop(opOR, yy, vyy));
+   IRAtom *min_yy = assignNew('V', mce, ty, binop(opAND, yy, not_vyy));
+   if (is_signed) {
+      // Now unbias.
+      max_xx = assignNew('V', mce, ty, binop(opXOR, max_xx, MSBs));
+      min_xx = assignNew('V', mce, ty, binop(opXOR, min_xx, MSBs));
+      max_yy = assignNew('V', mce, ty, binop(opXOR, max_yy, MSBs));
+      min_yy = assignNew('V', mce, ty, binop(opXOR, min_yy, MSBs));
+   }
+   IRAtom *min_xx_gt_max_yy = assignNew('V', mce, ty, binop(opGT, min_xx, max_yy));
+   IRAtom *min_yy_gt_max_xx = assignNew('V', mce, ty, binop(opGT, min_yy, max_xx));
+   return min_xx_gt_max_yy;
+   // If either of those are true then all the bits are defined.
+   IRAtom *either = assignNew('V', mce, ty, binop(opOR, min_xx_gt_max_yy, min_yy_gt_max_xx));
+   // We need to invert because for us, defined is 0.
+   return assignNew('V', mce, ty, unop(opNOT, either));
+}
 
 /* --------- Semi-accurate interpretation of CmpORD. --------- */
 
@@ -3947,9 +4033,13 @@ IRAtom* expr2vbits_Binop ( MCEnv* mce,
       case Iop_PwExtUSMulQAdd8x16:
          return binary16Ix8(mce, vatom1, vatom2);
 
-      case Iop_Sub32x4:
       case Iop_CmpGT32Sx4:
+         return expensiveCmpGT(mce, 32, True /* signed */,
+                               4, vatom1, vatom2, atom1, atom2);
       case Iop_CmpGT32Ux4:
+         return expensiveCmpGT(mce, 32, False /* unsigned */,
+                               4, vatom1, vatom2, atom1, atom2);
+      case Iop_Sub32x4:
       case Iop_CmpEQ32x4:
       case Iop_QAdd32Sx4:
       case Iop_QAdd32Ux4:
