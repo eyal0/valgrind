@@ -24,5 +24,41 @@ HEAP SUMMARY:
    by 0x........: f (leak-cases.c:78)
    by 0x........: main (leak-cases.c:107)
 
+16 bytes in 1 blocks are possibly lost in loss record ... of ...
+   at 0x........: malloc (vg_replace_malloc.c:...)
+   by 0x........: mk (leak-cases.c:52)
+   by 0x........: f (leak-cases.c:81)
+   by 0x........: main (leak-cases.c:107)
+
+16 bytes in 1 blocks are possibly lost in loss record ... of ...
+   at 0x........: malloc (vg_replace_malloc.c:...)
+   by 0x........: mk (leak-cases.c:52)
+   by 0x........: f (leak-cases.c:84)
+   by 0x........: main (leak-cases.c:107)
+
+16 bytes in 1 blocks are possibly lost in loss record ... of ...
+   at 0x........: malloc (vg_replace_malloc.c:...)
+   by 0x........: mk (leak-cases.c:52)
+   by 0x........: f (leak-cases.c:84)
+   by 0x........: main (leak-cases.c:107)
+
+16 bytes in 1 blocks are possibly lost in loss record ... of ...
+   at 0x........: malloc (vg_replace_malloc.c:...)
+   by 0x........: mk (leak-cases.c:52)
+   by 0x........: f (leak-cases.c:87)
+   by 0x........: main (leak-cases.c:107)
+
+16 bytes in 1 blocks are possibly lost in loss record ... of ...
+   at 0x........: malloc (vg_replace_malloc.c:...)
+   by 0x........: mk (leak-cases.c:52)
+   by 0x........: f (leak-cases.c:87)
+   by 0x........: main (leak-cases.c:107)
+
+16 bytes in 1 blocks are definitely lost in loss record ... of ...
+   at 0x........: malloc (vg_replace_malloc.c:...)
+   by 0x........: mk (leak-cases.c:52)
+   by 0x........: f (leak-cases.c:74)
+   by 0x........: main (leak-cases.c:107)
+
 
 Exit program on first error (--exit-on-first-error=yes)
