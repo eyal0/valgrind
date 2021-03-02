@@ -19,6 +19,7 @@ EXTRA_DIST = \
 	insn-pmovmskb.vgtest insn-pmovmskb.stdout.exp insn-pmovmskb.stderr.exp \
 		insn-pmovmskb.stderr.exp-clang \
 	more_x87_fp.stderr.exp more_x87_fp.stdout.exp more_x87_fp.vgtest \
+	pcmpgtd.stderr.exp pcmpgtd.vgtest \
 	sh-mem-vec128-plo-no.vgtest \
 		sh-mem-vec128-plo-no.stderr.exp \
 		sh-mem-vec128-plo-no.stdout.exp \
@@ -44,6 +45,7 @@ check_PROGRAMS = \
 	fxsave-amd64 \
 	insn-bsfl \
 	insn-pmovmskb \
+	pcmpgtd \
 	sh-mem-vec128 \
 	sse_memory \
 	xor-undef-amd64
@@ -56,8 +58,8 @@ endif
 # clang 3.5.0 barfs about -mfancy-math-387
 if !COMPILER_IS_CLANG
  check_PROGRAMS += \
- 	more_x87_fp \
- 	shr_edx
+	more_x87_fp \
+	shr_edx
 endif
 
 AM_CFLAGS    += @FLAG_M64@
