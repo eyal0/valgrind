@@ -1,0 +1,44 @@
+
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgtd.c:74)
+   by 0x........: doit (pcmpgtd.c:110)
+   by 0x........: main (pcmpgtd.c:115)
+
+xxxxxxxx > xxxxxxxx == false
+00000000 > 00000000 == false
+00000000 > f0000000 == true
+f0000000 > 00000000 == false
+00000000 > fxxxxxxx == true
+0xxxxxxx > fxxxxxxx == true
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgtd.c:74)
+   by 0x........: doit (pcmpgtd.c:110)
+   by 0x........: main (pcmpgtd.c:124)
+
+xxxxxxx0 > f0000000 == true
+xxxxxxx1 > 80000000 == true
+5xxxxxxx > 6xxxxxxx == false
+8xxxxxxx > 9xxxxxxx == false
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgtd.c:74)
+   by 0x........: doit (pcmpgtd.c:110)
+   by 0x........: main (pcmpgtd.c:129)
+
+1234567x > 12345678 == false
+1234567x > 1234567f == false
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgtd.c:74)
+   by 0x........: doit (pcmpgtd.c:110)
+   by 0x........: main (pcmpgtd.c:131)
+
+1234567x > 1234567e == false
+
+HEAP SUMMARY:
+    in use at exit: 0 bytes in 0 blocks
+  total heap usage: 0 allocs, 0 frees, 0 bytes allocated
+
+For a detailed leak analysis, rerun with: --leak-check=full
+
+Use --track-origins=yes to see where uninitialised values come from
+For lists of detected and suppressed errors, rerun with: -s
+ERROR SUMMARY: 4 errors from 4 contexts (suppressed: 0 from 0)
