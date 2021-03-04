@@ -1288,24 +1288,9 @@ static IRAtom* expensiveCmpEQorNE ( MCEnv*  mce,
 }
 
 /* Check if we can know, despite the uncertain bits, that xx is greater than yy.
-   Notice that it's xx > yy and not the other way around.  pcmpgtd appears
-   reversed in gdb disassembly, with yy first and xx second and xx is the
-   target.
-
-   We can combine xx and vxx to create two values: the largest that xx could
-   possibly be and the smallest that xx could possibly be.  Likewise, we can do
-   the same for yy.  We'll call those max_xx and min_xx and max_yy and min_yy.
-
-   If max_yy is is not greater than min_xx then yy can't possibly be greater
-   than xx so we know our answer for sure.  If min_yy is greater than max_xx
-   then yy is definitely greater than xx.  For all other cases, we can't know.
-
-   For unsigned it's easy to make the min and max: Just set the unknown bits to
-   all 0s or all 1s.  For signed it's harder because having a 1 in the MSB makes
-   a number smaller!  It's tricky because the first bit is the sign bit.  We can
-   work around this by changing from 2's complement numbers to biased numbers.
-   We just need to xor the MSB of the inputs with 1.  Then we can treat the
-   values as if unsigned.
+   Notice that it's xx > yy and not the other way around.  This is Intel syntax
+   with destination first.  It will appear reversed in gdb disassembly (AT&T
+   syntax).
  */
 static IRAtom* expensiveCmpGT ( MCEnv*  mce,
                                 unsigned int word_size,
@@ -1348,14 +1333,21 @@ static IRAtom* expensiveCmpGT ( MCEnv*  mce,
    }
    IRAtom *MSBs;
    if (is_signed) {
+      // For unsigned it's easy to make the min and max: Just set the unknown
+      // bits all to 0s or 1s.  For signed it's harder because having a 1 in the
+      // MSB makes a number smaller, not larger!  We can work around this by
+      // flipping the MSB before and after computing the min and max values.
       IRAtom *const0 = mkV128(0);
       IRAtom *all_ones = assignNew('V', mce, ty, binop(opEQ, const0, const0));
       MSBs = assignNew('V', mce, ty, binop(opSHL, all_ones, mkU8(31)));
       xx = assignNew('V', mce, ty, binop(opXOR, xx, MSBs));
       yy = assignNew('V', mce, ty, binop(opXOR, yy, MSBs));
-      // From here on out, we're dealing with biased integers instead of 2's
-      // complement.
+      // From here on out, we're dealing with MSB-flipped integers.
    }
+   // We can combine xx and vxx to create two values: the largest that xx could
+   // possibly be and the smallest that xx could possibly be.  Likewise, we can
+   // do the same for yy.  We'll call those max_xx and min_xx and max_yy and
+   // min_yy.
    IRAtom *not_vxx = assignNew('V', mce, ty, unop(opNOT, vxx));
    IRAtom *not_vyy = assignNew('V', mce, ty, unop(opNOT, vyy));
    IRAtom *max_xx = assignNew('V', mce, ty, binop(opOR, xx, vxx));
@@ -1363,7 +1355,7 @@ static IRAtom* expensiveCmpGT ( MCEnv*  mce,
    IRAtom *max_yy = assignNew('V', mce, ty, binop(opOR, yy, vyy));
    IRAtom *min_yy = assignNew('V', mce, ty, binop(opAND, yy, not_vyy));
    if (is_signed) {
-      // Now unbias.
+      // Unflip the MSBs.
       max_xx = assignNew('V', mce, ty, binop(opXOR, max_xx, MSBs));
       min_xx = assignNew('V', mce, ty, binop(opXOR, min_xx, MSBs));
       max_yy = assignNew('V', mce, ty, binop(opXOR, max_yy, MSBs));
@@ -1371,22 +1363,16 @@ static IRAtom* expensiveCmpGT ( MCEnv*  mce,
    }
    IRAtom *min_xx_gt_max_yy = assignNew('V', mce, ty, binop(opGT, min_xx, max_yy));
    IRAtom *max_xx_gt_min_yy = assignNew('V', mce, ty, binop(opGT, max_xx, min_yy));
-   // For each vector, if the value in the first operand is greater than the one
-   // in in the second operand, all bits are set to one.  Otherwise, zero.
-   //
-   // If former is 1s then xx is definitely greater than yy.  That's a defined
-   // value.
-   //
-   // If the latter is true then there could be a value of xx greater than yy,
-   // so it's undefined.  And the inverse of that is that there cannot be a
-   // value of xx greater than yy, so the result is definitely false.  That's a
-   // defined value, too.
+   // If min_xx is greater than max_yy then xx is surely greater than yy so we know
+   // our answer for sure.  If max_xx is not greater than min_yy then xx can't
+   // possible be greater than yy so again we know the answer for sure.  For all
+   // other cases, we can't know.
    //
    // So the result is defined if:
    //
    // min_xx_gt_max_yy | ~max_xx_gt_min_yy
    //
-   // Because defined in vbits is 0s and not1s, we need to invert that:
+   // Because defined in vbits is 0s and not 1s, we need to invert that:
    //
    // ~(min_xx_gt_max_yy | ~max_xx_gt_min_yy)
    //
