@@ -35,6 +35,16 @@ support for X86/macOS 10.13, AMD64/macOS 10.13 and nanoMIPS/Linux.
     Valgrind.  The vector-packed-decimal facility is currently not
     exploited by the standard toolchain and libraries.
 
+* ppc64:
+
+  - Various bug fixes.  Fix for the sync field to limit setting just two
+    of the two bits in the L-field. Fix the write size for the stxsibx and
+    stxsihx instructions.  Fix the modsw and modsd instructions.
+
+  - Partial support for ISA 3.1 has been added.  Support for the VSX PCV
+    mask instructions, bfloat16 GER instructions, and bfloat16 to/from float
+    32-bit conversion instructions are still missing.
+
 * Valgrind now supports debuginfod, an HTTP server for distributing
   ELF/DWARF debugging information. When a debuginfo file cannot be
   found locally, Valgrind is able to query debuginfod servers for the
@@ -43,10 +53,19 @@ support for X86/macOS 10.13, AMD64/macOS 10.13 and nanoMIPS/Linux.
 
 * ==================== TOOL CHANGES ====================
 
-All the tools and their vgpreload libraries are now installed under
-libexec because they cannot be executed directly and should be run
-through the valgrind executable. This should be an internal, not user
-visible, change, but might impact valgrind packagers.
+* General tool changes
+
+  - All the tools and their vgpreload libraries are now installed under
+    libexec because they cannot be executed directly and should be run
+    through the valgrind executable. This should be an internal, not user
+    visible, change, but might impact valgrind packagers.
+
+  - The --track-fds option now respects -q, --quiet and won't output
+    anything if no file descriptors are leaked. It also won't report
+    the standard stdin (0), stdout (1) or stderr (2) descriptors as
+    being leaked with --trace-fds=yes anymore. To track whether the
+    standard file descriptors are still open at the end of the program
+    run use --trace-fds=all.
 
 * DHAT:
 
@@ -88,12 +107,14 @@ where XXXXXX is the bug number as listed below.
 140178  open("/proc/self/exe", ...); doesn't quite work
 140939 --track-fds reports leakage of stdout/in/err and doesn't respect -q
 217695  malloc/calloc/realloc/memalign failure doesn't set errno to ENOMEM
+338633  gdbserver_tests/nlcontrolc.vgtest hangs on arm64
 345077  linux syscall execveat support (linux 3.19)
 361770  Missing F_ADD_SEALS
 369029  handle linux syscalls sched_getattr and sched_setattr
 384729  __libc_freeres inhibits cross-platform valgrind
 388787  Support for C++17 new/delete
 391853  Makefile.all.am:L247 and @SOLARIS_UNDEF_LARGESOURCE@ being empty
+396656  Warnings while reading debug info
 397605  ioctl FICLONE mishandled
 408663  Suppression file for musl libc
 404076  s390x: z14 vector instructions not implemented
@@ -120,29 +141,35 @@ where XXXXXX is the bug number as listed below.
 427404  PPC ISA 3.1 support is missing, part 6
 427870  lmw, lswi and related PowerPC insns aren't allowed on ppc64le
 427787  Support new faccessat2 linux syscall (439)
+427969  debuginfo section duplicates a section in the main ELF file
 428035  drd: Unbreak the musl build
 428648  s390_emit_load_mem panics due to 20-bit offset for vector load
 428716  cppcheck detects potential leak in VEX/useful/smchash.c
 428909  helgrind: need to intercept duplicate libc definitions for Fedora 33
 429352  PPC ISA 3.1 support is missing, part 7
+429354  PPC ISA 3.1 support is missing, part 8
 429692  unhandled ppc64le-linux syscall: 147 (getsid)
 429864  s390x: C++ atomic test_and_set yields false-positive memcheck
         diagnostics
 429952  Errors when building regtest with clang
 430354  ppc stxsibx and stxsihx instructions write too much data
+430429  valgrind.h doesn't compile on s390x with clang
 430485  expr_is_guardable doesn't handle Iex_Qop
 431556  Complete arm64 FADDP v8.2 instruction support
 432102  Add support for DWARF5 as produced by GCC11
 432161  Addition of arm64 v8.2 FADDP, FNEG and FSQRT
 432381  drd: Process STACK_REGISTER client requests
+432552  [AArch64] invalid error emitted for pre-decremented byte/hword addresses
 432672  vg_regtest: test-specific environment variables not reset between tests
 432809  VEX should support REX.W + POPF
 432861  PPC modsw and modsd give incorrect results for 1 mod 12
+432870  gdbserver_tests:nlcontrolc hangs with newest glibc2.33 x86-64
 432215  Add debuginfod functionality
 433323  Use pkglibexecdir as vglibdir
 433500  DRD regtest faulures when libstdc++ and libgcc debuginfo are installed
 433629  valgrind/README has type "abd" instead of "and"
 433641  Rust std::sys::unix::fs::try_statx Syscall param fstatat(file_name)
+433898  arm64: Handle sp, lr, fp as DwReg in CfiExpr
 n-i-bz  helgrind: If hg_cli__realloc fails, return NULL.
 
 
@@ -329,6 +356,7 @@ where XXXXXX is the bug number as listed below.
 419503  s390x: Avoid modifying registers returned from isel functions
 421321  gcc10 arm64 build needs __getauxval for linking with libgcc
 421570  std_mutex fails on Arm v8.1 h/w
+434035  vgdb might crash if valgrind is killed
 n-i-bz  Fix minor one time leaks in dhat.
 n-i-bz  Add --run-cxx-freeres=no in outer args to avoid inner crashes.
 n-i-bz  Add support for the Linux io_uring system calls
