@@ -1293,14 +1293,13 @@ static IRAtom* expensiveCmpEQorNE ( MCEnv*  mce,
    syntax).
  */
 static IRAtom* expensiveCmpGT ( MCEnv*  mce,
-                                unsigned int word_size,
-                                Bool is_signed,
-                                unsigned int count,
+                                IROp opGT,
                                 IRAtom* vxx, IRAtom* vyy,
                                 IRAtom* xx,  IRAtom* yy )
 {
-   IROp   opAND, opOR, opXOR, opNOT, opEQ, opSHL, opGT;
+   IROp   opAND, opOR, opXOR, opNOT, opEQ, opSHL;
    IRType ty;
+   Bool is_signed;
 
    tl_assert(isShadowAtom(mce,vxx));
    tl_assert(isShadowAtom(mce,vyy));
@@ -1309,28 +1308,33 @@ static IRAtom* expensiveCmpGT ( MCEnv*  mce,
    tl_assert(sameKindedAtoms(vxx,xx));
    tl_assert(sameKindedAtoms(vyy,yy));
 
-   switch (word_size * count) {
-      case 128:
-         ty = Ity_V128;
-         opAND = Iop_AndV128;
-         opOR   = Iop_OrV128;
-         opXOR  = Iop_XorV128;
-         opNOT  = Iop_NotV128;
+   switch (opGT) {
+      case Iop_CmpGT32Sx4:
+      case Iop_CmpGT32Ux4:
+         opEQ = Iop_CmpEQ32x4;
+         opSHL = Iop_ShlN32x4;
          break;
       default:
          VG_(tool_panic)("expensiveCmpGT");
    }
-   if (word_size == 32 && count == 4) {
-      opEQ = Iop_CmpEQ32x4;
-      opSHL = Iop_ShlN32x4;
-      if (is_signed) {
-         opGT = Iop_CmpGT32Sx4;
-      } else {
-         opGT = Iop_CmpGT32Ux4;
-      }
-   } else {
-      VG_(tool_panic)("expensiveCmpGT");
+
+   switch (opGT) {
+      case Iop_CmpGT32Sx4:
+         is_signed = True;
+         break;
+      case Iop_CmpGT32Ux4:
+         is_signed = False;
+         break;
+      default:
+         VG_(tool_panic)("expensiveCmpGT");
    }
+
+   ty = Ity_V128;
+   opAND = Iop_AndV128;
+   opOR   = Iop_OrV128;
+   opXOR  = Iop_XorV128;
+   opNOT  = Iop_NotV128;
+
    IRAtom *MSBs;
    if (is_signed) {
       // For unsigned it's easy to make the min and max: Just set the unknown
@@ -4060,11 +4064,9 @@ IRAtom* expr2vbits_Binop ( MCEnv* mce,
          return binary16Ix8(mce, vatom1, vatom2);
 
       case Iop_CmpGT32Sx4:
-         return expensiveCmpGT(mce, 32, True /* signed */,
-                               4, vatom1, vatom2, atom1, atom2);
       case Iop_CmpGT32Ux4:
-         return expensiveCmpGT(mce, 32, False /* unsigned */,
-                               4, vatom1, vatom2, atom1, atom2);
+         return expensiveCmpGT(mce, op,
+                               vatom1, vatom2, atom1, atom2);
       case Iop_Sub32x4:
       case Iop_CmpEQ32x4:
       case Iop_QAdd32Sx4:
