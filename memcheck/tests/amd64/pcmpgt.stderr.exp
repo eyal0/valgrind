@@ -1,0 +1,143 @@
+
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgt.c:147)
+   by 0x........: doit64Sx2 (pcmpgt.c:223)
+   by 0x........: main (pcmpgt.c:242)
+
+xxxxxxxxxxxxxxxx > xxxxxxxxxxxxxxxx == false, completely undefined, error above
+0000000000000000 > 0000000000000000 == false, completely defined
+0000000000000000 > f000000000000000 == true, completely defined
+f000000000000000 > 0000000000000000 == false, completely defined
+0000000000000000 > fxxxxxxxxxxxxxxx == true, defined: 0 > all negatives
+0xxxxxxxxxxxxxxx > fxxxxxxxxxxxxxxx == true, defined: non-negatives > all negatives
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgt.c:147)
+   by 0x........: doit64Sx2 (pcmpgt.c:223)
+   by 0x........: main (pcmpgt.c:248)
+
+xxxxxxxxxxxxxxx0 > f000000000000000 == true, undefined, error above
+xxxxxxxxxxxxxxx1 > 8000000000000000 == true, defined: ends with 1 > MIN_INT
+5xxxxxxxxxxxxxxx > 6xxxxxxxxxxxxxxx == false, defined
+8xxxxxxxxxxxxxxx > 9xxxxxxxxxxxxxxx == false, defined
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgt.c:147)
+   by 0x........: doit64Sx2 (pcmpgt.c:223)
+   by 0x........: main (pcmpgt.c:252)
+
+123456781234567x > 1234567812345678 == false, undefined, error above
+123456781234567x > 123456781234567f == false, defined: x can't be more than f
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgt.c:147)
+   by 0x........: doit64Sx2 (pcmpgt.c:223)
+   by 0x........: main (pcmpgt.c:254)
+
+123456781234567x > 123456781234567e == false, undefined: x can be more than e, error above
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgt.c:147)
+   by 0x........: doit32Sx4 (pcmpgt.c:228)
+   by 0x........: main (pcmpgt.c:256)
+
+xxxxxxxx > xxxxxxxx == false, completely undefined, error above
+00000000 > 00000000 == false, completely defined
+00000000 > f0000000 == true, completely defined
+f0000000 > 00000000 == false, completely defined
+00000000 > fxxxxxxx == true, defined: 0 > all negatives
+0xxxxxxx > fxxxxxxx == true, defined: non-negatives > all negatives
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgt.c:147)
+   by 0x........: doit32Sx4 (pcmpgt.c:228)
+   by 0x........: main (pcmpgt.c:262)
+
+xxxxxxx0 > f0000000 == true, undefined, error above
+xxxxxxx1 > 80000000 == true, defined: ends with 1 > MIN_INT
+5xxxxxxx > 6xxxxxxx == false, defined
+8xxxxxxx > 9xxxxxxx == false, defined
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgt.c:147)
+   by 0x........: doit32Sx4 (pcmpgt.c:228)
+   by 0x........: main (pcmpgt.c:266)
+
+1234567x > 12345678 == false, undefined, error above
+1234567x > 1234567f == false, defined: x can't be more than f
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgt.c:147)
+   by 0x........: doit32Sx4 (pcmpgt.c:228)
+   by 0x........: main (pcmpgt.c:268)
+
+1234567x > 1234567e == false, undefined: x can be more than e, error above
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgt.c:147)
+   by 0x........: doit16Sx8 (pcmpgt.c:233)
+   by 0x........: main (pcmpgt.c:270)
+
+xxxx > xxxx == false, completely undefined, error above
+0000 > 0000 == false, completely defined
+0000 > f000 == true, completely defined
+f000 > 0000 == false, completely defined
+0000 > fxxx == true, defined: 0 > all negatives
+0xxx > fxxx == true, defined: non-negatives > all negatives
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgt.c:147)
+   by 0x........: doit16Sx8 (pcmpgt.c:233)
+   by 0x........: main (pcmpgt.c:276)
+
+xxx0 > f000 == true, undefined, error above
+xxx1 > 8000 == true, defined: ends with 1 > MIN_INT
+5xxx > 6xxx == false, defined
+8xxx > 9xxx == false, defined
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgt.c:147)
+   by 0x........: doit16Sx8 (pcmpgt.c:233)
+   by 0x........: main (pcmpgt.c:280)
+
+123x > 1234 == false, undefined, error above
+123x > 123f == false, defined: x can't be more than f
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgt.c:147)
+   by 0x........: doit16Sx8 (pcmpgt.c:233)
+   by 0x........: main (pcmpgt.c:282)
+
+123x > 123e == false, undefined: x can be more than e, error above
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgt.c:147)
+   by 0x........: doit8Sx16 (pcmpgt.c:238)
+   by 0x........: main (pcmpgt.c:284)
+
+xx > xx == false, completely undefined, error above
+00 > 00 == false, completely defined
+00 > f0 == true, completely defined
+f0 > 00 == false, completely defined
+00 > fx == true, defined: 0 > all negatives
+0x > fx == true, defined: non-negatives > all negatives
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgt.c:147)
+   by 0x........: doit8Sx16 (pcmpgt.c:238)
+   by 0x........: main (pcmpgt.c:290)
+
+x0 > f0 == true, undefined, error above
+x1 > 80 == true, defined: ends with 1 > MIN_INT
+5x > 6x == false, defined
+8x > 9x == false, defined
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgt.c:147)
+   by 0x........: doit8Sx16 (pcmpgt.c:238)
+   by 0x........: main (pcmpgt.c:294)
+
+1x > 12 == false, undefined, error above
+1x > 1f == false, defined: x can't be more than f
+Conditional jump or move depends on uninitialised value(s)
+   at 0x........: use (pcmpgt.c:147)
+   by 0x........: doit8Sx16 (pcmpgt.c:238)
+   by 0x........: main (pcmpgt.c:296)
+
+1x > 1e == false, undefined: x can be more than e, error above
+
+HEAP SUMMARY:
+    in use at exit: 0 bytes in 0 blocks
+  total heap usage: 0 allocs, 0 frees, 0 bytes allocated
+
+For a detailed leak analysis, rerun with: --leak-check=full
+
+Use --track-origins=yes to see where uninitialised values come from
+For lists of detected and suppressed errors, rerun with: -s
+ERROR SUMMARY: 16 errors from 16 contexts (suppressed: 0 from 0)

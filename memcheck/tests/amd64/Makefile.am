@@ -19,7 +19,7 @@ EXTRA_DIST = \
 	insn-pmovmskb.vgtest insn-pmovmskb.stdout.exp insn-pmovmskb.stderr.exp \
 		insn-pmovmskb.stderr.exp-clang \
 	more_x87_fp.stderr.exp more_x87_fp.stdout.exp more_x87_fp.vgtest \
-	pcmpgtd.stderr.exp pcmpgtd.vgtest \
+	pcmpgt.stderr.exp pcmpgt.vgtest \
 	sh-mem-vec128-plo-no.vgtest \
 		sh-mem-vec128-plo-no.stderr.exp \
 		sh-mem-vec128-plo-no.stdout.exp \
@@ -45,7 +45,7 @@ check_PROGRAMS = \
 	fxsave-amd64 \
 	insn-bsfl \
 	insn-pmovmskb \
-	pcmpgtd \
+	pcmpgt \
 	sh-mem-vec128 \
 	sse_memory \
 	xor-undef-amd64

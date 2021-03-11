@@ -1297,8 +1297,9 @@ static IRAtom* expensiveCmpGT ( MCEnv*  mce,
                                 IRAtom* vxx, IRAtom* vyy,
                                 IRAtom* xx,  IRAtom* yy )
 {
-   IROp   opAND, opOR, opXOR, opNOT, opEQ, opSHL;
+   IROp   opAND, opOR, opXOR, opNOT, opSHL;
    IRType ty;
+   unsigned int word_size;
    Bool is_signed;
 
    tl_assert(isShadowAtom(mce,vxx));
@@ -1309,20 +1310,41 @@ static IRAtom* expensiveCmpGT ( MCEnv*  mce,
    tl_assert(sameKindedAtoms(vyy,yy));
 
    switch (opGT) {
+      case Iop_CmpGT64Sx2:
+      case Iop_CmpGT64Ux2:
+         opSHL = Iop_ShlN64x2;
+         word_size = 64;
+         break;
       case Iop_CmpGT32Sx4:
       case Iop_CmpGT32Ux4:
-         opEQ = Iop_CmpEQ32x4;
          opSHL = Iop_ShlN32x4;
+         word_size = 32;
+         break;
+      case Iop_CmpGT16Sx8:
+      case Iop_CmpGT16Ux8:
+         opSHL = Iop_ShlN16x8;
+         word_size = 16;
+         break;
+      case Iop_CmpGT8Sx16:
+      case Iop_CmpGT8Ux16:
+         opSHL = Iop_ShlN8x16;
+         word_size = 8;
          break;
       default:
          VG_(tool_panic)("expensiveCmpGT");
    }
 
    switch (opGT) {
+      case Iop_CmpGT64Sx2:
       case Iop_CmpGT32Sx4:
+      case Iop_CmpGT16Sx8:
+      case Iop_CmpGT8Sx16:
          is_signed = True;
          break;
+      case Iop_CmpGT64Ux2:
       case Iop_CmpGT32Ux4:
+      case Iop_CmpGT16Ux8:
+      case Iop_CmpGT8Ux16:
          is_signed = False;
          break;
       default:
@@ -1341,9 +1363,15 @@ static IRAtom* expensiveCmpGT ( MCEnv*  mce,
       // bits all to 0s or 1s.  For signed it's harder because having a 1 in the
       // MSB makes a number smaller, not larger!  We can work around this by
       // flipping the MSB before and after computing the min and max values.
-      IRAtom *const0 = mkV128(0);
-      IRAtom *all_ones = assignNew('V', mce, ty, binop(opEQ, const0, const0));
-      MSBs = assignNew('V', mce, ty, binop(opSHL, all_ones, mkU8(31)));
+      if (word_size == 8) {
+         IRAtom *all_ones = mkV128(0xffff);
+         IRAtom *upper_MSBs = assignNew('V', mce, ty, binop(Iop_ShlN16x8, all_ones, mkU8(15)));
+         IRAtom *lower_MSBs = assignNew('V', mce, ty, binop(Iop_ShrN16x8, upper_MSBs, mkU8(8)));
+         MSBs = assignNew('V', mce, ty, binop(opOR, upper_MSBs, lower_MSBs));
+      } else {
+         IRAtom *all_ones = mkV128(0xffff);
+         MSBs = assignNew('V', mce, ty, binop(opSHL, all_ones, mkU8(word_size-1)));
+      }
       xx = assignNew('V', mce, ty, binop(opXOR, xx, MSBs));
       yy = assignNew('V', mce, ty, binop(opXOR, yy, MSBs));
       // From here on out, we're dealing with MSB-flipped integers.
@@ -4012,8 +4040,6 @@ IRAtom* expr2vbits_Binop ( MCEnv* mce,
       case Iop_Min8Sx16:
       case Iop_Max8Ux16:
       case Iop_Max8Sx16:
-      case Iop_CmpGT8Sx16:
-      case Iop_CmpGT8Ux16:
       case Iop_CmpEQ8x16:
       case Iop_Avg8Ux16:
       case Iop_Avg8Sx16:
@@ -4041,8 +4067,6 @@ IRAtom* expr2vbits_Binop ( MCEnv* mce,
       case Iop_Min16Ux8:
       case Iop_Max16Sx8:
       case Iop_Max16Ux8:
-      case Iop_CmpGT16Sx8:
-      case Iop_CmpGT16Ux8:
       case Iop_CmpEQ16x8:
       case Iop_Avg16Ux8:
       case Iop_Avg16Sx8:
@@ -4063,8 +4087,14 @@ IRAtom* expr2vbits_Binop ( MCEnv* mce,
       case Iop_PwExtUSMulQAdd8x16:
          return binary16Ix8(mce, vatom1, vatom2);
 
+      case Iop_CmpGT64Sx2:
+      case Iop_CmpGT64Ux2:
       case Iop_CmpGT32Sx4:
       case Iop_CmpGT32Ux4:
+      case Iop_CmpGT16Sx8:
+      case Iop_CmpGT16Ux8:
+      case Iop_CmpGT8Sx16:
+      case Iop_CmpGT8Ux16:
          return expensiveCmpGT(mce, op,
                                vatom1, vatom2, atom1, atom2);
       case Iop_Sub32x4:
@@ -4101,8 +4131,6 @@ IRAtom* expr2vbits_Binop ( MCEnv* mce,
       case Iop_Min64Sx2:
       case Iop_Min64Ux2:
       case Iop_CmpEQ64x2:
-      case Iop_CmpGT64Sx2:
-      case Iop_CmpGT64Ux2:
       case Iop_QSal64x2:
       case Iop_QShl64x2:
       case Iop_QAdd64Ux2:
