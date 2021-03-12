@@ -18,6 +18,7 @@ EXTRA_DIST = \
 	insn-pcmpistri.vgtest insn-pcmpistri.stdout.exp insn-pcmpistri.stderr.exp \
 	insn-pmovmskb.vgtest insn-pmovmskb.stdout.exp insn-pmovmskb.stderr.exp \
 	more_x87_fp.stderr.exp more_x87_fp.stdout.exp more_x87_fp.vgtest \
+	pcmpgt.stderr.exp pcmpgt.vgtest \
 	sh-mem-vec128-plo-no.vgtest \
 		sh-mem-vec128-plo-no.stderr.exp \
 		sh-mem-vec128-plo-no.stdout.exp \
@@ -43,6 +44,7 @@ check_PROGRAMS = \
 	fxsave-amd64 \
 	insn-bsfl \
 	insn-pmovmskb \
+	pcmpgt \
 	sh-mem-vec128 \
 	sse_memory \
 	xor-undef-amd64
@@ -55,8 +57,8 @@ endif
 # clang 3.5.0 barfs about -mfancy-math-387
 if !COMPILER_IS_CLANG
  check_PROGRAMS += \
- 	more_x87_fp \
- 	shr_edx
+	more_x87_fp \
+	shr_edx
 endif
 
 AM_CFLAGS    += @FLAG_M64@
@@ -68,4 +70,5 @@ insn_pcmpistri_CFLAGS	= $(AM_CFLAGS)
 more_x87_fp_CFLAGS	= $(AM_CFLAGS) -O -ffast-math -mfpmath=387 \
 				-mfancy-math-387
 more_x87_fp_LDADD	= -lm
+pcmpgt_SOURCES = pcmpgt.cpp
 shr_edx_CFLAGS		= $(AM_CFLAGS) @FLAG_NO_PIE@

@@ -1,0 +1,522 @@
+
+Uninitialised byte(s) found during client check request
+   at 0x........: void doit<unsigned long>(char const*, char const*, bool, char const*) (pcmpgt.cpp:143)
+   by 0x........: main (pcmpgt.cpp:152)
+ Address 0x........ is on thread 1's stack
+ in frame #0, created by void doit<unsigned long>(char const*, char const*, bool, char const*) (pcmpgt.cpp:138)
+
+Conditional jump or move depends on uninitialised value(s)
+   ...
+   by 0x........: void doit<unsigned long>(char const*, char const*, bool, char const*) (pcmpgt.cpp:147)
+   by 0x........: main (pcmpgt.cpp:152)
+
+Use of uninitialised value of size 8
+   ...
+   by 0x........: void doit<unsigned long>(char const*, char const*, bool, char const*) (pcmpgt.cpp:147)
+   by 0x........: main (pcmpgt.cpp:152)
+
+Conditional jump or move depends on uninitialised value(s)
+   ...
+   by 0x........: void doit<unsigned long>(char const*, char const*, bool, char const*) (pcmpgt.cpp:147)
+   by 0x........: main (pcmpgt.cpp:152)
+
+Conditional jump or move depends on uninitialised value(s)
+   ...
+   by 0x........: void doit<unsigned long>(char const*, char const*, bool, char const*) (pcmpgt.cpp:147)
+   by 0x........: main (pcmpgt.cpp:152)
+
+Conditional jump or move depends on uninitialised value(s)
+   ...
+   by 0x........: void doit<unsigned long>(char const*, char const*, bool, char const*) (pcmpgt.cpp:147)
+   by 0x........: main (pcmpgt.cpp:152)
+
+xxxxxxxxxxxxxxxx > xxxxxxxxxxxxxxxx == 0, completely undefined, error above, 1 == 1
+xxxxxxxxxxxxxxxx > xxxxxxxxxxxxxxxx == 0, completely undefined, error above, 1 == 1
+0000000000000000 > 0000000000000000 == 0, completely defined, 0 == 0
+0000000000000000 > 0000000000000000 == 0, completely defined, 0 == 0
+0000000000000000 > f000000000000000 == -1, completely defined, 0 == 0
+0000000000000000 > f000000000000000 == -1, completely defined, 0 == 0
+f000000000000000 > 0000000000000000 == 0, completely defined, 0 == 0
+f000000000000000 > 0000000000000000 == 0, completely defined, 0 == 0
+0000000000000000 > fxxxxxxxxxxxxxxx == -1, defined: 0 > all negatives, 0 == 0
+0000000000000000 > fxxxxxxxxxxxxxxx == -1, defined: 0 > all negatives, 0 == 0
+0xxxxxxxxxxxxxxx > fxxxxxxxxxxxxxxx == -1, defined: non-negatives > all negatives, 0 == 0
+0xxxxxxxxxxxxxxx > fxxxxxxxxxxxxxxx == -1, defined: non-negatives > all negatives, 0 == 0
+Uninitialised byte(s) found during client check request
+   at 0x........: void doit<unsigned long>(char const*, char const*, bool, char const*) (pcmpgt.cpp:143)
+   by 0x........: main (pcmpgt.cpp:158)
+ Address 0x........ is on thread 1's stack
+ in frame #0, created by void doit<unsigned long>(char const*, char const*, bool, char const*) (pcmpgt.cpp:138)
+
+xxxxxxxxxxxxxxx0 > f000000000000000 == -1, undefined, error above, 1 == 1
+xxxxxxxxxxxxxxx0 > f000000000000000 == -1, undefined, error above, 1 == 1
+xxxxxxxxxxxxxxx1 > 8000000000000000 == -1, defined: ends with 1 > MIN_INT, 0 == 0
+xxxxxxxxxxxxxxx1 > 8000000000000000 == -1, defined: ends with 1 > MIN_INT, 0 == 0
+5xxxxxxxxxxxxxxx > 6xxxxxxxxxxxxxxx == 0, defined, 0 == 0
+5xxxxxxxxxxxxxxx > 6xxxxxxxxxxxxxxx == 0, defined, 0 == 0
+8xxxxxxxxxxxxxxx > 9xxxxxxxxxxxxxxx == 0, defined, 0 == 0
+8xxxxxxxxxxxxxxx > 9xxxxxxxxxxxxxxx == 0, defined, 0 == 0
+Uninitialised byte(s) found during client check request
+   at 0x........: void doit<unsigned long>(char const*, char const*, bool, char const*) (pcmpgt.cpp:143)
+   by 0x........: main (pcmpgt.cpp:162)
+ Address 0x........ is on thread 1's stack
+ in frame #0, created by void doit<unsigned long>(char const*, char const*, bool, char const*) (pcmpgt.cpp:138)
+
+123456781234567x > 1234567812345678 == 0, undefined, error above, 1 == 1
+123456781234567x > 1234567812345678 == 0, undefined, error above, 1 == 1
+123456781234567x > 123456781234567f == 0, defined: x can't be more than f, 0 == 0
+123456781234567x > 123456781234567f == 0, defined: x can't be more than f, 0 == 0
+Uninitialised byte(s) found during client check request
+   at 0x........: void doit<unsigned long>(char const*, char const*, bool, char const*) (pcmpgt.cpp:143)
+   by 0x........: main (pcmpgt.cpp:164)
+ Address 0x........ is on thread 1's stack
+ in frame #0, created by void doit<unsigned long>(char const*, char const*, bool, char const*) (pcmpgt.cpp:138)
+
+123456781234567x > 123456781234567e == 0, undefined: x can be more than e, error above, 1 == 1
+123456781234567x > 123456781234567e == 0, undefined: x can be more than e, error above, 1 == 1
+Uninitialised byte(s) found during client check request
+   at 0x........: void doit<unsigned int>(char const*, char const*, bool, char const*) (pcmpgt.cpp:143)
+   by 0x........: main (pcmpgt.cpp:166)
+ Address 0x........ is on thread 1's stack
+ in frame #0, created by void doit<unsigned int>(char const*, char const*, bool, char const*) (pcmpgt.cpp:138)
+
+xxxxxxxx > xxxxxxxx == 0, completely undefined, error above, 1 == 1
+xxxxxxxx > xxxxxxxx == 0, completely undefined, error above, 1 == 1
+xxxxxxxx > xxxxxxxx == 0, completely undefined, error above, 1 == 1
+xxxxxxxx > xxxxxxxx == 0, completely undefined, error above, 1 == 1
+00000000 > 00000000 == 0, completely defined, 0 == 0
+00000000 > 00000000 == 0, completely defined, 0 == 0
+00000000 > 00000000 == 0, completely defined, 0 == 0
+00000000 > 00000000 == 0, completely defined, 0 == 0
+00000000 > f0000000 == -1, completely defined, 0 == 0
+00000000 > f0000000 == -1, completely defined, 0 == 0
+00000000 > f0000000 == -1, completely defined, 0 == 0
+00000000 > f0000000 == -1, completely defined, 0 == 0
+f0000000 > 00000000 == 0, completely defined, 0 == 0
+f0000000 > 00000000 == 0, completely defined, 0 == 0
+f0000000 > 00000000 == 0, completely defined, 0 == 0
+f0000000 > 00000000 == 0, completely defined, 0 == 0
+00000000 > fxxxxxxx == -1, defined: 0 > all negatives, 0 == 0
+00000000 > fxxxxxxx == -1, defined: 0 > all negatives, 0 == 0
+00000000 > fxxxxxxx == -1, defined: 0 > all negatives, 0 == 0
+00000000 > fxxxxxxx == -1, defined: 0 > all negatives, 0 == 0
+0xxxxxxx > fxxxxxxx == -1, defined: non-negatives > all negatives, 0 == 0
+0xxxxxxx > fxxxxxxx == -1, defined: non-negatives > all negatives, 0 == 0
+0xxxxxxx > fxxxxxxx == -1, defined: non-negatives > all negatives, 0 == 0
+0xxxxxxx > fxxxxxxx == -1, defined: non-negatives > all negatives, 0 == 0
+Uninitialised byte(s) found during client check request
+   at 0x........: void doit<unsigned int>(char const*, char const*, bool, char const*) (pcmpgt.cpp:143)
+   by 0x........: main (pcmpgt.cpp:172)
+ Address 0x........ is on thread 1's stack
+ in frame #0, created by void doit<unsigned int>(char const*, char const*, bool, char const*) (pcmpgt.cpp:138)
+
+xxxxxxx0 > f0000000 == -1, undefined, error above, 1 == 1
+xxxxxxx0 > f0000000 == -1, undefined, error above, 1 == 1
+xxxxxxx0 > f0000000 == -1, undefined, error above, 1 == 1
+xxxxxxx0 > f0000000 == -1, undefined, error above, 1 == 1
+xxxxxxx1 > 80000000 == -1, defined: ends with 1 > MIN_INT, 0 == 0
+xxxxxxx1 > 80000000 == -1, defined: ends with 1 > MIN_INT, 0 == 0
+xxxxxxx1 > 80000000 == -1, defined: ends with 1 > MIN_INT, 0 == 0
+xxxxxxx1 > 80000000 == -1, defined: ends with 1 > MIN_INT, 0 == 0
+5xxxxxxx > 6xxxxxxx == 0, defined, 0 == 0
+5xxxxxxx > 6xxxxxxx == 0, defined, 0 == 0
+5xxxxxxx > 6xxxxxxx == 0, defined, 0 == 0
+5xxxxxxx > 6xxxxxxx == 0, defined, 0 == 0
+8xxxxxxx > 9xxxxxxx == 0, defined, 0 == 0
+8xxxxxxx > 9xxxxxxx == 0, defined, 0 == 0
+8xxxxxxx > 9xxxxxxx == 0, defined, 0 == 0
+8xxxxxxx > 9xxxxxxx == 0, defined, 0 == 0
+Uninitialised byte(s) found during client check request
+   at 0x........: void doit<unsigned int>(char const*, char const*, bool, char const*) (pcmpgt.cpp:143)
+   by 0x........: main (pcmpgt.cpp:176)
+ Address 0x........ is on thread 1's stack
+ in frame #0, created by void doit<unsigned int>(char const*, char const*, bool, char const*) (pcmpgt.cpp:138)
+
+1234567x > 12345678 == 0, undefined, error above, 1 == 1
+1234567x > 12345678 == 0, undefined, error above, 1 == 1
+1234567x > 12345678 == 0, undefined, error above, 1 == 1
+1234567x > 12345678 == 0, undefined, error above, 1 == 1
+1234567x > 1234567f == 0, defined: x can't be more than f, 0 == 0
+1234567x > 1234567f == 0, defined: x can't be more than f, 0 == 0
+1234567x > 1234567f == 0, defined: x can't be more than f, 0 == 0
+1234567x > 1234567f == 0, defined: x can't be more than f, 0 == 0
+Uninitialised byte(s) found during client check request
+   at 0x........: void doit<unsigned int>(char const*, char const*, bool, char const*) (pcmpgt.cpp:143)
+   by 0x........: main (pcmpgt.cpp:178)
+ Address 0x........ is on thread 1's stack
+ in frame #0, created by void doit<unsigned int>(char const*, char const*, bool, char const*) (pcmpgt.cpp:138)
+
+1234567x > 1234567e == 0, undefined: x can be more than e, error above, 1 == 1
+1234567x > 1234567e == 0, undefined: x can be more than e, error above, 1 == 1
+1234567x > 1234567e == 0, undefined: x can be more than e, error above, 1 == 1
+1234567x > 1234567e == 0, undefined: x can be more than e, error above, 1 == 1
+Uninitialised byte(s) found during client check request
+   at 0x........: void doit<unsigned short>(char const*, char const*, bool, char const*) (pcmpgt.cpp:143)
+   by 0x........: main (pcmpgt.cpp:180)
+ Address 0x........ is on thread 1's stack
+ in frame #0, created by void doit<unsigned short>(char const*, char const*, bool, char const*) (pcmpgt.cpp:138)
+
+xxxx > xxxx == 0, completely undefined, error above, 1 == 1
+xxxx > xxxx == 0, completely undefined, error above, 1 == 1
+xxxx > xxxx == 0, completely undefined, error above, 1 == 1
+xxxx > xxxx == 0, completely undefined, error above, 1 == 1
+xxxx > xxxx == 0, completely undefined, error above, 1 == 1
+xxxx > xxxx == 0, completely undefined, error above, 1 == 1
+xxxx > xxxx == 0, completely undefined, error above, 1 == 1
+xxxx > xxxx == 0, completely undefined, error above, 1 == 1
+0000 > 0000 == 0, completely defined, 0 == 0
+0000 > 0000 == 0, completely defined, 0 == 0
+0000 > 0000 == 0, completely defined, 0 == 0
+0000 > 0000 == 0, completely defined, 0 == 0
+0000 > 0000 == 0, completely defined, 0 == 0
+0000 > 0000 == 0, completely defined, 0 == 0
+0000 > 0000 == 0, completely defined, 0 == 0
+0000 > 0000 == 0, completely defined, 0 == 0
+0000 > f000 == 65535, completely defined, 0 == 0
+0000 > f000 == 65535, completely defined, 0 == 0
+0000 > f000 == 65535, completely defined, 0 == 0
+0000 > f000 == 65535, completely defined, 0 == 0
+0000 > f000 == 65535, completely defined, 0 == 0
+0000 > f000 == 65535, completely defined, 0 == 0
+0000 > f000 == 65535, completely defined, 0 == 0
+0000 > f000 == 65535, completely defined, 0 == 0
+f000 > 0000 == 0, completely defined, 0 == 0
+f000 > 0000 == 0, completely defined, 0 == 0
+f000 > 0000 == 0, completely defined, 0 == 0
+f000 > 0000 == 0, completely defined, 0 == 0
+f000 > 0000 == 0, completely defined, 0 == 0
+f000 > 0000 == 0, completely defined, 0 == 0
+f000 > 0000 == 0, completely defined, 0 == 0
+f000 > 0000 == 0, completely defined, 0 == 0
+0000 > fxxx == 65535, defined: 0 > all negatives, 0 == 0
+0000 > fxxx == 65535, defined: 0 > all negatives, 0 == 0
+0000 > fxxx == 65535, defined: 0 > all negatives, 0 == 0
+0000 > fxxx == 65535, defined: 0 > all negatives, 0 == 0
+0000 > fxxx == 65535, defined: 0 > all negatives, 0 == 0
+0000 > fxxx == 65535, defined: 0 > all negatives, 0 == 0
+0000 > fxxx == 65535, defined: 0 > all negatives, 0 == 0
+0000 > fxxx == 65535, defined: 0 > all negatives, 0 == 0
+0xxx > fxxx == 65535, defined: non-negatives > all negatives, 0 == 0
+0xxx > fxxx == 65535, defined: non-negatives > all negatives, 0 == 0
+0xxx > fxxx == 65535, defined: non-negatives > all negatives, 0 == 0
+0xxx > fxxx == 65535, defined: non-negatives > all negatives, 0 == 0
+0xxx > fxxx == 65535, defined: non-negatives > all negatives, 0 == 0
+0xxx > fxxx == 65535, defined: non-negatives > all negatives, 0 == 0
+0xxx > fxxx == 65535, defined: non-negatives > all negatives, 0 == 0
+0xxx > fxxx == 65535, defined: non-negatives > all negatives, 0 == 0
+Uninitialised byte(s) found during client check request
+   at 0x........: void doit<unsigned short>(char const*, char const*, bool, char const*) (pcmpgt.cpp:143)
+   by 0x........: main (pcmpgt.cpp:186)
+ Address 0x........ is on thread 1's stack
+ in frame #0, created by void doit<unsigned short>(char const*, char const*, bool, char const*) (pcmpgt.cpp:138)
+
+xxx0 > f000 == 65535, undefined, error above, 1 == 1
+xxx0 > f000 == 65535, undefined, error above, 1 == 1
+xxx0 > f000 == 65535, undefined, error above, 1 == 1
+xxx0 > f000 == 65535, undefined, error above, 1 == 1
+xxx0 > f000 == 65535, undefined, error above, 1 == 1
+xxx0 > f000 == 65535, undefined, error above, 1 == 1
+xxx0 > f000 == 65535, undefined, error above, 1 == 1
+xxx0 > f000 == 65535, undefined, error above, 1 == 1
+xxx1 > 8000 == 65535, defined: ends with 1 > MIN_INT, 0 == 0
+xxx1 > 8000 == 65535, defined: ends with 1 > MIN_INT, 0 == 0
+xxx1 > 8000 == 65535, defined: ends with 1 > MIN_INT, 0 == 0
+xxx1 > 8000 == 65535, defined: ends with 1 > MIN_INT, 0 == 0
+xxx1 > 8000 == 65535, defined: ends with 1 > MIN_INT, 0 == 0
+xxx1 > 8000 == 65535, defined: ends with 1 > MIN_INT, 0 == 0
+xxx1 > 8000 == 65535, defined: ends with 1 > MIN_INT, 0 == 0
+xxx1 > 8000 == 65535, defined: ends with 1 > MIN_INT, 0 == 0
+5xxx > 6xxx == 0, defined, 0 == 0
+5xxx > 6xxx == 0, defined, 0 == 0
+5xxx > 6xxx == 0, defined, 0 == 0
+5xxx > 6xxx == 0, defined, 0 == 0
+5xxx > 6xxx == 0, defined, 0 == 0
+5xxx > 6xxx == 0, defined, 0 == 0
+5xxx > 6xxx == 0, defined, 0 == 0
+5xxx > 6xxx == 0, defined, 0 == 0
+8xxx > 9xxx == 0, defined, 0 == 0
+8xxx > 9xxx == 0, defined, 0 == 0
+8xxx > 9xxx == 0, defined, 0 == 0
+8xxx > 9xxx == 0, defined, 0 == 0
+8xxx > 9xxx == 0, defined, 0 == 0
+8xxx > 9xxx == 0, defined, 0 == 0
+8xxx > 9xxx == 0, defined, 0 == 0
+8xxx > 9xxx == 0, defined, 0 == 0
+Uninitialised byte(s) found during client check request
+   at 0x........: void doit<unsigned short>(char const*, char const*, bool, char const*) (pcmpgt.cpp:143)
+   by 0x........: main (pcmpgt.cpp:190)
+ Address 0x........ is on thread 1's stack
+ in frame #0, created by void doit<unsigned short>(char const*, char const*, bool, char const*) (pcmpgt.cpp:138)
+
+123x > 1234 == 0, undefined, error above, 1 == 1
+123x > 1234 == 0, undefined, error above, 1 == 1
+123x > 1234 == 0, undefined, error above, 1 == 1
+123x > 1234 == 0, undefined, error above, 1 == 1
+123x > 1234 == 0, undefined, error above, 1 == 1
+123x > 1234 == 0, undefined, error above, 1 == 1
+123x > 1234 == 0, undefined, error above, 1 == 1
+123x > 1234 == 0, undefined, error above, 1 == 1
+123x > 123f == 0, defined: x can't be more than f, 0 == 0
+123x > 123f == 0, defined: x can't be more than f, 0 == 0
+123x > 123f == 0, defined: x can't be more than f, 0 == 0
+123x > 123f == 0, defined: x can't be more than f, 0 == 0
+123x > 123f == 0, defined: x can't be more than f, 0 == 0
+123x > 123f == 0, defined: x can't be more than f, 0 == 0
+123x > 123f == 0, defined: x can't be more than f, 0 == 0
+123x > 123f == 0, defined: x can't be more than f, 0 == 0
+Uninitialised byte(s) found during client check request
+   at 0x........: void doit<unsigned short>(char const*, char const*, bool, char const*) (pcmpgt.cpp:143)
+   by 0x........: main (pcmpgt.cpp:192)
+ Address 0x........ is on thread 1's stack
+ in frame #0, created by void doit<unsigned short>(char const*, char const*, bool, char const*) (pcmpgt.cpp:138)
+
+123x > 123e == 0, undefined: x can be more than e, error above, 1 == 1
+123x > 123e == 0, undefined: x can be more than e, error above, 1 == 1
+123x > 123e == 0, undefined: x can be more than e, error above, 1 == 1
+123x > 123e == 0, undefined: x can be more than e, error above, 1 == 1
+123x > 123e == 0, undefined: x can be more than e, error above, 1 == 1
+123x > 123e == 0, undefined: x can be more than e, error above, 1 == 1
+123x > 123e == 0, undefined: x can be more than e, error above, 1 == 1
+123x > 123e == 0, undefined: x can be more than e, error above, 1 == 1
+Uninitialised byte(s) found during client check request
+   at 0x........: void doit<unsigned char>(char const*, char const*, bool, char const*) (pcmpgt.cpp:143)
+   by 0x........: main (pcmpgt.cpp:194)
+ Address 0x........ is on thread 1's stack
+ in frame #0, created by void doit<unsigned char>(char const*, char const*, bool, char const*) (pcmpgt.cpp:138)
+
+xx > xx == 0, completely undefined, error above, 1 == 1
+xx > xx == 0, completely undefined, error above, 1 == 1
+xx > xx == 0, completely undefined, error above, 1 == 1
+xx > xx == 0, completely undefined, error above, 1 == 1
+xx > xx == 0, completely undefined, error above, 1 == 1
+xx > xx == 0, completely undefined, error above, 1 == 1
+xx > xx == 0, completely undefined, error above, 1 == 1
+xx > xx == 0, completely undefined, error above, 1 == 1
+xx > xx == 0, completely undefined, error above, 1 == 1
+xx > xx == 0, completely undefined, error above, 1 == 1
+xx > xx == 0, completely undefined, error above, 1 == 1
+xx > xx == 0, completely undefined, error above, 1 == 1
+xx > xx == 0, completely undefined, error above, 1 == 1
+xx > xx == 0, completely undefined, error above, 1 == 1
+xx > xx == 0, completely undefined, error above, 1 == 1
+xx > xx == 0, completely undefined, error above, 1 == 1
+00 > 00 == 0, completely defined, 0 == 0
+00 > 00 == 0, completely defined, 0 == 0
+00 > 00 == 0, completely defined, 0 == 0
+00 > 00 == 0, completely defined, 0 == 0
+00 > 00 == 0, completely defined, 0 == 0
+00 > 00 == 0, completely defined, 0 == 0
+00 > 00 == 0, completely defined, 0 == 0
+00 > 00 == 0, completely defined, 0 == 0
+00 > 00 == 0, completely defined, 0 == 0
+00 > 00 == 0, completely defined, 0 == 0
+00 > 00 == 0, completely defined, 0 == 0
+00 > 00 == 0, completely defined, 0 == 0
+00 > 00 == 0, completely defined, 0 == 0
+00 > 00 == 0, completely defined, 0 == 0
+00 > 00 == 0, completely defined, 0 == 0
+00 > 00 == 0, completely defined, 0 == 0
+00 > f0 == 255, completely defined, 0 == 0
+00 > f0 == 255, completely defined, 0 == 0
+00 > f0 == 255, completely defined, 0 == 0
+00 > f0 == 255, completely defined, 0 == 0
+00 > f0 == 255, completely defined, 0 == 0
+00 > f0 == 255, completely defined, 0 == 0
+00 > f0 == 255, completely defined, 0 == 0
+00 > f0 == 255, completely defined, 0 == 0
+00 > f0 == 255, completely defined, 0 == 0
+00 > f0 == 255, completely defined, 0 == 0
+00 > f0 == 255, completely defined, 0 == 0
+00 > f0 == 255, completely defined, 0 == 0
+00 > f0 == 255, completely defined, 0 == 0
+00 > f0 == 255, completely defined, 0 == 0
+00 > f0 == 255, completely defined, 0 == 0
+00 > f0 == 255, completely defined, 0 == 0
+f0 > 00 == 0, completely defined, 0 == 0
+f0 > 00 == 0, completely defined, 0 == 0
+f0 > 00 == 0, completely defined, 0 == 0
+f0 > 00 == 0, completely defined, 0 == 0
+f0 > 00 == 0, completely defined, 0 == 0
+f0 > 00 == 0, completely defined, 0 == 0
+f0 > 00 == 0, completely defined, 0 == 0
+f0 > 00 == 0, completely defined, 0 == 0
+f0 > 00 == 0, completely defined, 0 == 0
+f0 > 00 == 0, completely defined, 0 == 0
+f0 > 00 == 0, completely defined, 0 == 0
+f0 > 00 == 0, completely defined, 0 == 0
+f0 > 00 == 0, completely defined, 0 == 0
+f0 > 00 == 0, completely defined, 0 == 0
+f0 > 00 == 0, completely defined, 0 == 0
+f0 > 00 == 0, completely defined, 0 == 0
+00 > fx == 255, defined: 0 > all negatives, 0 == 0
+00 > fx == 255, defined: 0 > all negatives, 0 == 0
+00 > fx == 255, defined: 0 > all negatives, 0 == 0
+00 > fx == 255, defined: 0 > all negatives, 0 == 0
+00 > fx == 255, defined: 0 > all negatives, 0 == 0
+00 > fx == 255, defined: 0 > all negatives, 0 == 0
+00 > fx == 255, defined: 0 > all negatives, 0 == 0
+00 > fx == 255, defined: 0 > all negatives, 0 == 0
+00 > fx == 255, defined: 0 > all negatives, 0 == 0
+00 > fx == 255, defined: 0 > all negatives, 0 == 0
+00 > fx == 255, defined: 0 > all negatives, 0 == 0
+00 > fx == 255, defined: 0 > all negatives, 0 == 0
+00 > fx == 255, defined: 0 > all negatives, 0 == 0
+00 > fx == 255, defined: 0 > all negatives, 0 == 0
+00 > fx == 255, defined: 0 > all negatives, 0 == 0
+00 > fx == 255, defined: 0 > all negatives, 0 == 0
+0x > fx == 255, defined: non-negatives > all negatives, 0 == 0
+0x > fx == 255, defined: non-negatives > all negatives, 0 == 0
+0x > fx == 255, defined: non-negatives > all negatives, 0 == 0
+0x > fx == 255, defined: non-negatives > all negatives, 0 == 0
+0x > fx == 255, defined: non-negatives > all negatives, 0 == 0
+0x > fx == 255, defined: non-negatives > all negatives, 0 == 0
+0x > fx == 255, defined: non-negatives > all negatives, 0 == 0
+0x > fx == 255, defined: non-negatives > all negatives, 0 == 0
+0x > fx == 255, defined: non-negatives > all negatives, 0 == 0
+0x > fx == 255, defined: non-negatives > all negatives, 0 == 0
+0x > fx == 255, defined: non-negatives > all negatives, 0 == 0
+0x > fx == 255, defined: non-negatives > all negatives, 0 == 0
+0x > fx == 255, defined: non-negatives > all negatives, 0 == 0
+0x > fx == 255, defined: non-negatives > all negatives, 0 == 0
+0x > fx == 255, defined: non-negatives > all negatives, 0 == 0
+0x > fx == 255, defined: non-negatives > all negatives, 0 == 0
+Uninitialised byte(s) found during client check request
+   at 0x........: void doit<unsigned char>(char const*, char const*, bool, char const*) (pcmpgt.cpp:143)
+   by 0x........: main (pcmpgt.cpp:200)
+ Address 0x........ is on thread 1's stack
+ in frame #0, created by void doit<unsigned char>(char const*, char const*, bool, char const*) (pcmpgt.cpp:138)
+
+x0 > f0 == 255, undefined, error above, 1 == 1
+x0 > f0 == 255, undefined, error above, 1 == 1
+x0 > f0 == 255, undefined, error above, 1 == 1
+x0 > f0 == 255, undefined, error above, 1 == 1
+x0 > f0 == 255, undefined, error above, 1 == 1
+x0 > f0 == 255, undefined, error above, 1 == 1
+x0 > f0 == 255, undefined, error above, 1 == 1
+x0 > f0 == 255, undefined, error above, 1 == 1
+x0 > f0 == 255, undefined, error above, 1 == 1
+x0 > f0 == 255, undefined, error above, 1 == 1
+x0 > f0 == 255, undefined, error above, 1 == 1
+x0 > f0 == 255, undefined, error above, 1 == 1
+x0 > f0 == 255, undefined, error above, 1 == 1
+x0 > f0 == 255, undefined, error above, 1 == 1
+x0 > f0 == 255, undefined, error above, 1 == 1
+x0 > f0 == 255, undefined, error above, 1 == 1
+x1 > 80 == 255, defined: ends with 1 > MIN_INT, 0 == 0
+x1 > 80 == 255, defined: ends with 1 > MIN_INT, 0 == 0
+x1 > 80 == 255, defined: ends with 1 > MIN_INT, 0 == 0
+x1 > 80 == 255, defined: ends with 1 > MIN_INT, 0 == 0
+x1 > 80 == 255, defined: ends with 1 > MIN_INT, 0 == 0
+x1 > 80 == 255, defined: ends with 1 > MIN_INT, 0 == 0
+x1 > 80 == 255, defined: ends with 1 > MIN_INT, 0 == 0
+x1 > 80 == 255, defined: ends with 1 > MIN_INT, 0 == 0
+x1 > 80 == 255, defined: ends with 1 > MIN_INT, 0 == 0
+x1 > 80 == 255, defined: ends with 1 > MIN_INT, 0 == 0
+x1 > 80 == 255, defined: ends with 1 > MIN_INT, 0 == 0
+x1 > 80 == 255, defined: ends with 1 > MIN_INT, 0 == 0
+x1 > 80 == 255, defined: ends with 1 > MIN_INT, 0 == 0
+x1 > 80 == 255, defined: ends with 1 > MIN_INT, 0 == 0
+x1 > 80 == 255, defined: ends with 1 > MIN_INT, 0 == 0
+x1 > 80 == 255, defined: ends with 1 > MIN_INT, 0 == 0
+5x > 6x == 0, defined, 0 == 0
+5x > 6x == 0, defined, 0 == 0
+5x > 6x == 0, defined, 0 == 0
+5x > 6x == 0, defined, 0 == 0
+5x > 6x == 0, defined, 0 == 0
+5x > 6x == 0, defined, 0 == 0
+5x > 6x == 0, defined, 0 == 0
+5x > 6x == 0, defined, 0 == 0
+5x > 6x == 0, defined, 0 == 0
+5x > 6x == 0, defined, 0 == 0
+5x > 6x == 0, defined, 0 == 0
+5x > 6x == 0, defined, 0 == 0
+5x > 6x == 0, defined, 0 == 0
+5x > 6x == 0, defined, 0 == 0
+5x > 6x == 0, defined, 0 == 0
+5x > 6x == 0, defined, 0 == 0
+8x > 9x == 0, defined, 0 == 0
+8x > 9x == 0, defined, 0 == 0
+8x > 9x == 0, defined, 0 == 0
+8x > 9x == 0, defined, 0 == 0
+8x > 9x == 0, defined, 0 == 0
+8x > 9x == 0, defined, 0 == 0
+8x > 9x == 0, defined, 0 == 0
+8x > 9x == 0, defined, 0 == 0
+8x > 9x == 0, defined, 0 == 0
+8x > 9x == 0, defined, 0 == 0
+8x > 9x == 0, defined, 0 == 0
+8x > 9x == 0, defined, 0 == 0
+8x > 9x == 0, defined, 0 == 0
+8x > 9x == 0, defined, 0 == 0
+8x > 9x == 0, defined, 0 == 0
+8x > 9x == 0, defined, 0 == 0
+Uninitialised byte(s) found during client check request
+   at 0x........: void doit<unsigned char>(char const*, char const*, bool, char const*) (pcmpgt.cpp:143)
+   by 0x........: main (pcmpgt.cpp:204)
+ Address 0x........ is on thread 1's stack
+ in frame #0, created by void doit<unsigned char>(char const*, char const*, bool, char const*) (pcmpgt.cpp:138)
+
+1x > 12 == 0, undefined, error above, 1 == 1
+1x > 12 == 0, undefined, error above, 1 == 1
+1x > 12 == 0, undefined, error above, 1 == 1
+1x > 12 == 0, undefined, error above, 1 == 1
+1x > 12 == 0, undefined, error above, 1 == 1
+1x > 12 == 0, undefined, error above, 1 == 1
+1x > 12 == 0, undefined, error above, 1 == 1
+1x > 12 == 0, undefined, error above, 1 == 1
+1x > 12 == 0, undefined, error above, 1 == 1
+1x > 12 == 0, undefined, error above, 1 == 1
+1x > 12 == 0, undefined, error above, 1 == 1
+1x > 12 == 0, undefined, error above, 1 == 1
+1x > 12 == 0, undefined, error above, 1 == 1
+1x > 12 == 0, undefined, error above, 1 == 1
+1x > 12 == 0, undefined, error above, 1 == 1
+1x > 12 == 0, undefined, error above, 1 == 1
+1x > 1f == 0, defined: x can't be more than f, 0 == 0
+1x > 1f == 0, defined: x can't be more than f, 0 == 0
+1x > 1f == 0, defined: x can't be more than f, 0 == 0
+1x > 1f == 0, defined: x can't be more than f, 0 == 0
+1x > 1f == 0, defined: x can't be more than f, 0 == 0
+1x > 1f == 0, defined: x can't be more than f, 0 == 0
+1x > 1f == 0, defined: x can't be more than f, 0 == 0
+1x > 1f == 0, defined: x can't be more than f, 0 == 0
+1x > 1f == 0, defined: x can't be more than f, 0 == 0
+1x > 1f == 0, defined: x can't be more than f, 0 == 0
+1x > 1f == 0, defined: x can't be more than f, 0 == 0
+1x > 1f == 0, defined: x can't be more than f, 0 == 0
+1x > 1f == 0, defined: x can't be more than f, 0 == 0
+1x > 1f == 0, defined: x can't be more than f, 0 == 0
+1x > 1f == 0, defined: x can't be more than f, 0 == 0
+1x > 1f == 0, defined: x can't be more than f, 0 == 0
+Uninitialised byte(s) found during client check request
+   at 0x........: void doit<unsigned char>(char const*, char const*, bool, char const*) (pcmpgt.cpp:143)
+   by 0x........: main (pcmpgt.cpp:206)
+ Address 0x........ is on thread 1's stack
+ in frame #0, created by void doit<unsigned char>(char const*, char const*, bool, char const*) (pcmpgt.cpp:138)
+
+1x > 1e == 0, undefined: x can be more than e, error above, 1 == 1
+1x > 1e == 0, undefined: x can be more than e, error above, 1 == 1
+1x > 1e == 0, undefined: x can be more than e, error above, 1 == 1
+1x > 1e == 0, undefined: x can be more than e, error above, 1 == 1
+1x > 1e == 0, undefined: x can be more than e, error above, 1 == 1
+1x > 1e == 0, undefined: x can be more than e, error above, 1 == 1
+1x > 1e == 0, undefined: x can be more than e, error above, 1 == 1
+1x > 1e == 0, undefined: x can be more than e, error above, 1 == 1
+1x > 1e == 0, undefined: x can be more than e, error above, 1 == 1
+1x > 1e == 0, undefined: x can be more than e, error above, 1 == 1
+1x > 1e == 0, undefined: x can be more than e, error above, 1 == 1
+1x > 1e == 0, undefined: x can be more than e, error above, 1 == 1
+1x > 1e == 0, undefined: x can be more than e, error above, 1 == 1
+1x > 1e == 0, undefined: x can be more than e, error above, 1 == 1
+1x > 1e == 0, undefined: x can be more than e, error above, 1 == 1
+1x > 1e == 0, undefined: x can be more than e, error above, 1 == 1
+
+HEAP SUMMARY:
+    in use at exit: 0 bytes in 0 blocks
+  total heap usage: 1 allocs, 1 frees, 72,704 bytes allocated
+
+For a detailed leak analysis, rerun with: --leak-check=full
+
+Use --track-origins=yes to see where uninitialised values come from
+For lists of detected and suppressed errors, rerun with: -s
+ERROR SUMMARY: 848 errors from 21 contexts (suppressed: 0 from 0)
