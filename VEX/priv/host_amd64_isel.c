@@ -3721,6 +3721,7 @@ static HReg iselVecExpr_wrk ( ISelEnv* env, const IRExpr* e )
          return dst;
       }
 
+      case Iop_ShlN8x16: laneBits = 8;  op = Asse_SHL16; goto do_SseShift;
       case Iop_ShlN16x8: laneBits = 16; op = Asse_SHL16; goto do_SseShift;
       case Iop_ShlN32x4: laneBits = 32; op = Asse_SHL32; goto do_SseShift;
       case Iop_ShlN64x2: laneBits = 64; op = Asse_SHL64; goto do_SseShift;
@@ -3739,6 +3740,26 @@ static HReg iselVecExpr_wrk ( ISelEnv* env, const IRExpr* e )
             vassert(c->tag == Ico_U8);
             UInt shift = c->Ico.U8;
             if (shift < laneBits) {
+               if (laneBits == 8) {
+                  // This instruction doesn't exist so we need to fake it.
+                  AMD64SseOp reverse_op = op;
+                  switch (op) {
+                     case Asse_SHL16:
+                        reverse_op = Asse_SHR16;
+                        break;
+                     default:
+                        vpanic("Iop_ShlN8x16");
+                  }
+                  HReg hi  = newVRegV(env);
+                  addInstr(env, mk_vMOVsd_RR(greg, hi));
+                  addInstr(env, AMD64Instr_SseShiftN(reverse_op, 8, hi));
+                  addInstr(env, AMD64Instr_SseShiftN(op, 8+shift, hi));
+                  addInstr(env, mk_vMOVsd_RR(greg, dst));
+                  addInstr(env, AMD64Instr_SseShiftN(op, 8+shift, dst));
+                  addInstr(env, AMD64Instr_SseShiftN(reverse_op, 8, dst));
+                  addInstr(env, AMD64Instr_SseReRg(Asse_OR, hi, dst));
+                  return dst;
+               }
                addInstr(env, mk_vMOVsd_RR(greg, dst));
                addInstr(env, AMD64Instr_SseShiftN(op, shift, dst));
                return dst;
@@ -3751,6 +3772,28 @@ static HReg iselVecExpr_wrk ( ISelEnv* env, const IRExpr* e )
          addInstr(env, AMD64Instr_Push(AMD64RMI_Imm(0)));
          addInstr(env, AMD64Instr_Push(rmi));
          addInstr(env, AMD64Instr_SseLdSt(True/*load*/, 16, ereg, rsp0));
+         if (laneBits == 8) {
+            // This instruction doesn't exist so we need to fake it.
+            AMD64SseOp reverse_op = op;
+            switch (op) {
+               case Asse_SHL16:
+                  reverse_op = Asse_SHR16;
+                  break;
+               default:
+                  vpanic("Iop_ShlN8x16");
+            }
+            HReg hi  = newVRegV(env);
+            addInstr(env, mk_vMOVsd_RR(greg, hi));
+            addInstr(env, AMD64Instr_SseShiftN(reverse_op, 8, hi));
+            addInstr(env, AMD64Instr_SseShiftN(op, 8, hi));
+            addInstr(env, AMD64Instr_SseReRg(op, ereg, hi));
+            addInstr(env, mk_vMOVsd_RR(greg, dst));
+            addInstr(env, AMD64Instr_SseShiftN(op, 8, dst));
+            addInstr(env, AMD64Instr_SseReRg(op, ereg, dst));
+            addInstr(env, AMD64Instr_SseShiftN(reverse_op, 8, dst));
+            addInstr(env, AMD64Instr_SseReRg(Asse_OR, hi, dst));
+            return dst;
+         }
          addInstr(env, mk_vMOVsd_RR(greg, dst));
          addInstr(env, AMD64Instr_SseReRg(op, ereg, dst));
          add_to_rsp(env, 16);
