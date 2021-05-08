@@ -51,7 +51,11 @@ typedef ULong  mz_uint64;
 #define MINIZ_USE_UNALIGNED_LOADS_AND_STORES 1
 #endif
 
-#define MINIZ_LITTLE_ENDIAN       ( defined(VG_LITTLEENDIAN) )
+#if defined(VG_LITTLEENDIAN)
+#define MINIZ_LITTLE_ENDIAN 1
+#else
+#define MINIZ_LITTLE_ENDIAN 0
+#endif
 #define MINIZ_HAS_64BIT_REGISTERS ( VG_WORDSIZE == 8 )
 
 // Works around MSVC's spammy "warning C4127: conditional expression is

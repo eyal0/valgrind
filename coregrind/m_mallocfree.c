@@ -1027,21 +1027,21 @@ UInt pszB_to_listNo_SLOW ( SizeT pszB__divided_by__VG_MIN_MALLOC_SZB )
                /* -- Exponential slope up, factor 1.05 -- */
                if (n < 67) return 64;
                if (n < 70) return 65;
-               /* else */  return 66;
+               else        return 66;
             } else {
                if (n < 77) return 67;
                if (n < 81) return 68;
-               /* else */  return 69;
+               else        return 69;
             }
          } else {
             if (n < 99) {
                if (n < 90) return 70;
                if (n < 94) return 71;
-               /* else */  return 72;
+               else        return 72;
             } else {
                if (n < 104) return 73;
                if (n < 109) return 74;
-               /* else */   return 75;
+               else         return 75;
             }
          }
       } else {
@@ -1049,22 +1049,22 @@ UInt pszB_to_listNo_SLOW ( SizeT pszB__divided_by__VG_MIN_MALLOC_SZB )
             if (n < 133) {
                if (n < 120) return 76;
                if (n < 126) return 77;
-               /* else */   return 78;
+               else         return 78;
             } else {
                if (n < 139) return 79;
                /* -- Exponential slope up, factor 1.10 -- */
                if (n < 153) return 80;
-               /* else */   return 81;
+               else         return 81;
             }
          } else {
             if (n < 224) {
                if (n < 185) return 82;
                if (n < 204) return 83;
-               /* else */   return 84;
+               else         return 84;
             } else {
                if (n < 247) return 85;
                if (n < 272) return 86;
-               /* else */   return 87;
+               else         return 87;
             }
          }
       }
@@ -1074,22 +1074,22 @@ UInt pszB_to_listNo_SLOW ( SizeT pszB__divided_by__VG_MIN_MALLOC_SZB )
             if (n < 398) {
                if (n < 329) return 88;
                if (n < 362) return 89;
-               /* else */   return 90;
+               else         return 90;
             } else {
                if (n < 438) return 91;
                if (n < 482) return 92;
-               /* else */   return 93;
+               else         return 93;
             }
          } else {
             if (n < 770) {
                if (n < 583) return 94;
                if (n < 641) return 95;
                /* -- Exponential slope up, factor 1.20 -- */
-               /* else */   return 96;
+               else         return 96;
             } else {
                if (n < 924) return 97;
                if (n < 1109) return 98;
-               /* else */    return 99;
+               else          return 99;
             }
          }
       } else {
@@ -1101,17 +1101,17 @@ UInt pszB_to_listNo_SLOW ( SizeT pszB__divided_by__VG_MIN_MALLOC_SZB )
             } else {
                if (n < 2760) return 103;
                if (n < 3312) return 104;
-               /* else */    return 105;
+               else          return 105;
             }
          } else {
             if (n < 6868) {
                if (n < 4769) return 106;
                if (n < 5723) return 107;
-               /* else */    return 108;
+               else          return 108;
             } else {
                if (n < 8241) return 109;
                if (n < 9890) return 110;
-               /* else */    return 111;
+               else          return 111;
             }
          }
       }

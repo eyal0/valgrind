@@ -107,25 +107,6 @@ void set_pc (CORE_ADDR newpc)
 #define itype_rt(x) ((x >> 16) & 0x1f)
 #define rtype_funct(x) (x & 0x3f)
 
-/* Do a endian load of a 32-bit word, regardless of the
-   endianness of the underlying host. */
-static inline UInt getUInt(UChar * p)
-{
-   UInt w = 0;
-#if defined (_MIPSEL)
-   w = (w << 8) | p[3];
-   w = (w << 8) | p[2];
-   w = (w << 8) | p[1];
-   w = (w << 8) | p[0];
-#elif defined (_MIPSEB)
-   w = (w << 8) | p[0];
-   w = (w << 8) | p[1];
-   w = (w << 8) | p[2];
-   w = (w << 8) | p[3];
-#endif
-   return w;
-}
-
 /* store registers in the guest state (gdbserver_to_valgrind)
    or fetch register from the guest state (valgrind_to_gdbserver). */
 static
