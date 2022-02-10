@@ -1030,6 +1030,7 @@
 /memcheck/tests/amd64/insn-bsfl
 /memcheck/tests/amd64/insn-pmovmskb
 /memcheck/tests/amd64/insn-pcmpistri
+/memcheck/tests/amd64/pcmpgt
 /memcheck/tests/amd64/sh-mem-vec128
 /memcheck/tests/amd64/sh-mem-vec256
 /memcheck/tests/amd64/xsave-avx
