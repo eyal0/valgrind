@@ -2415,9 +2415,19 @@ void do_shadow_Dirty ( MCEnv* mce, IRDirty* d )
 
    /* Inputs: unmasked args */
    for (i = 0; d->args[i]; i++) {
-      if (d->cee->mcx_mask & (1<<i)) {
+      if (i < d->cee->mcx_masks.count && ~d->cee->mcx_masks.mask[i] == 0) {
          /* ignore this arg */
       } else {
+         /* calculate the arg's definedness and merge it in.  curr_mask will
+          * have a 0 in each bit position that is to be ignored.  (This is the
+          * opposite of the mcx which has a 1 for ignore but it's convenient for
+          * the AND below.) */
+         ULong curr_mask = i < e->Iex.CCall.cee->mcx_masks.count ?
+                           ~e->Iex.CCall.cee->mcx_masks.masks[i] :
+                           ~((ULong)0);
+         /* TODO: This doesn't support masked_vbits yet. See masked_vbits
+          * above for how this should work. */
+         tl_assert(curr_mask == ~((ULong)0));
          here = mkPCastTo( mce, Ity_I32, expr2vbits(mce, d->args[i]) );
          curr = mkUifU32(mce, here, curr);
       }
