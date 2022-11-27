@@ -1787,7 +1787,7 @@ static IRExpr* mk_arm64g_calculate_condition_dyn ( IRExpr* cond )
 
    /* Exclude the requested condition, OP and NDEP from definedness
       checking.  We're only interested in DEP1 and DEP2. */
-   call->Iex.CCall.cee->mcx_mask = (1<<0) | (1<<3);
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks((1<<0) | (1<<3));
    return call;
 }
 
@@ -1826,7 +1826,7 @@ static IRExpr* mk_arm64g_calculate_flag_c ( void )
         );
    /* Exclude OP and NDEP from definedness checking.  We're only
       interested in DEP1 and DEP2. */
-   call->Iex.CCall.cee->mcx_mask = (1<<0) | (1<<3);
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks((1<<0) | (1<<3));
    return call;
 }
 
@@ -1850,7 +1850,7 @@ static IRExpr* mk_arm64g_calculate_flag_c ( void )
 //ZZ         );
 //ZZ    /* Exclude OP and NDEP from definedness checking.  We're only
 //ZZ       interested in DEP1 and DEP2. */
-//ZZ    call->Iex.CCall.cee->mcx_mask = (1<<0) | (1<<3);
+//ZZ    call->Iex.CCall.cee->mcx_masks = mk_mcx_masks((1<<0) | (1<<3));
 //ZZ    return call;
 //ZZ }
 
@@ -1873,7 +1873,7 @@ static IRExpr* mk_arm64g_calculate_flags_nzcv ( void )
         );
    /* Exclude OP and NDEP from definedness checking.  We're only
       interested in DEP1 and DEP2. */
-   call->Iex.CCall.cee->mcx_mask = (1<<0) | (1<<3);
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks((1<<0) | (1<<3));
    return call;
 }
 

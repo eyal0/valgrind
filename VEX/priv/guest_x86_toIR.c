@@ -795,7 +795,7 @@ static IRExpr* mk_x86g_calculate_eflags_all ( void )
         );
    /* Exclude OP and NDEP from definedness checking.  We're only
       interested in DEP1 and DEP2. */
-   call->Iex.CCall.cee->mcx_mask = (1<<0) | (1<<3);
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks((1<<0) | (1<<3));
    return call;
 }
 
@@ -819,7 +819,7 @@ static IRExpr* mk_x86g_calculate_condition ( X86Condcode cond )
         );
    /* Exclude the requested condition, OP and NDEP from definedness
       checking.  We're only interested in DEP1 and DEP2. */
-   call->Iex.CCall.cee->mcx_mask = (1<<0) | (1<<1) | (1<<4);
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks((1<<0) | (1<<1) | (1<<4));
    return unop(Iop_32to1, call);
 }
 
@@ -841,7 +841,7 @@ static IRExpr* mk_x86g_calculate_eflags_c ( void )
         );
    /* Exclude OP and NDEP from definedness checking.  We're only
       interested in DEP1 and DEP2. */
-   call->Iex.CCall.cee->mcx_mask = (1<<0) | (1<<3);
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks((1<<0) | (1<<3));
    return call;
 }
 

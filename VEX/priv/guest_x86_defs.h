@@ -240,7 +240,7 @@ extern VexEmNote
 
    (2) When passing the thunk components to an evaluation function
        (calculate_condition, calculate_eflags, calculate_eflags_c) the
-       IRCallee's mcx_mask must be set so as to exclude from
+       IRCallee's mcx_masks must be set so as to exclude from
        consideration all passed args except CC_DEP1 and CC_DEP2.
 
    Strictly speaking only (2) is necessary for correctness.  However,
@@ -323,7 +323,7 @@ extern VexEmNote
      helper function.  They are not part of this scheme.  The helper
      function takes the value to be rotated, the rotate amount and the
      old flags, and returns the new flags and the rotated value.
-     Since the helper's mcx_mask does not have any set bits, Memcheck
+     Since the helper's mcx_masks does not have any set bits, Memcheck
      will lazily propagate undefinedness from any of the 3 args into 
      both results (flags and actual value).
 */

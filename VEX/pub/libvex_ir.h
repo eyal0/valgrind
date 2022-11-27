@@ -342,21 +342,38 @@ extern Bool eqIRConst ( const IRConst*, const IRConst* );
    to construct a non-standard sequence to call a function declared
    like this.
 
-   mcx_mask is a sop to Memcheck.  It indicates which args should be
-   considered 'always defined' when lazily computing definedness of
-   the result.  Bit 0 of mcx_mask corresponds to args[0], bit 1 to
-   args[1], etc.  If a bit is set, the corresponding arg is excluded
-   (hence "x" in "mcx") from definedness checking.  
+   mcx_masks is a sop to Memcheck.  It indicates which args should be considered
+   'always defined' when lazily computing definedness of the result.
+   mcx_masks[0] of mcx_mask corresponds to args[0], mcx_masks[1] to args[1],
+   etc.  If a bit in an mcx_mask is set, the corresponding arg's bit is excluded
+   (hence "x" in "mcx") from definedness checking.  If the number of args
+   exceeds the number of masks then those args beyond the count are processed as
+   if they have a mask of all 0s, that is, do not ignore and of the bits.
 */
+
+typedef
+   struct {
+      Int    count; /* How many elements in the masks array. */
+      ULong* masks;
+   }
+   McxMasks;
 
 typedef
    struct {
       Int          regparms;
       const HChar* name;
       void*        addr;
-      UInt         mcx_mask;
+      McxMasks     mcx_masks;
    }
    IRCallee;
+
+/* Create masks of all 0 or all 1 depending on the bits in mcx_mask.
+
+   If a bit position is one in the input then the returned McxMasks will have a
+   mask that is all ones in the same position in the array of masks.  Otherwise,
+   all zeros.  The array will be just large enough to accommodate all the ones.
+*/
+extern McxMasks mk_mcx_masks ( UInt mcx_mask );
 
 /* Create an IRCallee. */
 extern IRCallee* mkIRCallee ( Int regparms, const HChar* name, void* addr );

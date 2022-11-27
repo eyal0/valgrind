@@ -983,7 +983,7 @@ s390_call_calculate_cc(void)
 
    /* Exclude OP and NDEP from definedness checking.  We're only
       interested in DEP1 and DEP2. */
-   call->Iex.CCall.cee->mcx_mask = (1<<0) | (1<<3);
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks((1<<0) | (1<<3));
 
    return call;
 }
@@ -1019,7 +1019,7 @@ s390_call_calculate_icc(UInt m, UInt opc, IRTemp op1, IRTemp op2)
 
    /* Exclude the requested condition, OP and NDEP from definedness
       checking.  We're only interested in DEP1 and DEP2. */
-   call->Iex.CCall.cee->mcx_mask = (1<<0) | (1<<1) | (1<<4);
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks((1<<0) | (1<<1) | (1<<4));
 
    return call;
 }
@@ -1043,7 +1043,7 @@ s390_call_calculate_cond(UInt m)
 
    /* Exclude the requested condition, OP and NDEP from definedness
       checking.  We're only interested in DEP1 and DEP2. */
-   call->Iex.CCall.cee->mcx_mask = (1<<0) | (1<<1) | (1<<4);
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks((1<<0) | (1<<1) | (1<<4));
 
    return call;
 }
@@ -9269,7 +9269,7 @@ s390_call_pfpo_helper(IRExpr *gr0)
    call = mkIRExprCCall(Ity_I32, 0 /*regparm*/,
                         "s390_do_pfpo", &s390_do_pfpo, args);
    /* Nothing is excluded from definedness checking. */
-   call->Iex.CCall.cee->mcx_mask = 0;
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks(0);
 
    return call;
 }
@@ -15065,7 +15065,7 @@ s390_call_cvb(IRExpr *in)
                         "s390_do_cvb", &s390_do_cvb, args);
 
    /* Nothing is excluded from definedness checking. */
-   call->Iex.CCall.cee->mcx_mask = 0;
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks(0);
 
    return call;
 }
@@ -15097,7 +15097,7 @@ s390_call_cvd(IRExpr *in)
                         "s390_do_cvd", &s390_do_cvd, args);
 
    /* Nothing is excluded from definedness checking. */
-   call->Iex.CCall.cee->mcx_mask = 0;
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks(0);
 
    return call;
 }
@@ -15600,7 +15600,7 @@ s390_call_cu21(IRExpr *srcval, IRExpr *low_surrogate)
                        "s390_do_cu21", &s390_do_cu21, args);
 
    /* Nothing is excluded from definedness checking. */
-   call->Iex.CCall.cee->mcx_mask = 0;
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks(0);
 
    return call;
 }
@@ -15727,7 +15727,7 @@ s390_call_cu24(IRExpr *srcval, IRExpr *low_surrogate)
                        "s390_do_cu24", &s390_do_cu24, args);
 
    /* Nothing is excluded from definedness checking. */
-   call->Iex.CCall.cee->mcx_mask = 0;
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks(0);
 
    return call;
 }
@@ -15834,7 +15834,7 @@ s390_call_cu42(IRExpr *srcval)
                        "s390_do_cu42", &s390_do_cu42, args);
 
    /* Nothing is excluded from definedness checking. */
-   call->Iex.CCall.cee->mcx_mask = 0;
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks(0);
 
    return call;
 }
@@ -15928,7 +15928,7 @@ s390_call_cu41(IRExpr *srcval)
                        "s390_do_cu41", &s390_do_cu41, args);
 
    /* Nothing is excluded from definedness checking. */
-   call->Iex.CCall.cee->mcx_mask = 0;
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks(0);
 
    return call;
 }
@@ -16019,7 +16019,7 @@ s390_call_cu12_cu14_helper1(IRExpr *byte1, IRExpr *etf3_and_m3_is_1)
                         &s390_do_cu12_cu14_helper1, args);
 
    /* Nothing is excluded from definedness checking. */
-   call->Iex.CCall.cee->mcx_mask = 0;
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks(0);
 
    return call;
 }
@@ -16034,7 +16034,7 @@ s390_call_cu12_helper2(IRExpr *byte1, IRExpr *byte2, IRExpr *byte3,
                         "s390_do_cu12_helper2", &s390_do_cu12_helper2, args);
 
    /* Nothing is excluded from definedness checking. */
-   call->Iex.CCall.cee->mcx_mask = 0;
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks(0);
 
    return call;
 }
@@ -16049,7 +16049,7 @@ s390_call_cu14_helper2(IRExpr *byte1, IRExpr *byte2, IRExpr *byte3,
                         "s390_do_cu14_helper2", &s390_do_cu14_helper2, args);
 
    /* Nothing is excluded from definedness checking. */
-   call->Iex.CCall.cee->mcx_mask = 0;
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks(0);
 
    return call;
 }
@@ -16206,7 +16206,7 @@ s390_call_ecag(IRExpr *op2addr)
                         "s390_do_ecag", &s390_do_ecag, args);
 
    /* Nothing is excluded from definedness checking. */
-   call->Iex.CCall.cee->mcx_mask = 0;
+   call->Iex.CCall.cee->mcx_masks = mk_mcx_masks(0);
 
    return call;
 }

@@ -2270,7 +2270,7 @@ IRAtom* mkLazy4 ( MCEnv* mce, IRType finalVty,
 /* Do the lazy propagation game from a null-terminated vector of
    atoms.  This is presumably the arguments to a helper call, so the
    IRCallee info is also supplied in order that we can know which
-   arguments should be ignored (via the .mcx_mask field). 
+   arguments should be ignored (via the .mcx_masks field).
 */
 static
 IRAtom* mkLazyN ( MCEnv* mce, 
@@ -2288,8 +2288,10 @@ IRAtom* mkLazyN ( MCEnv* mce,
    for (i = 0; exprvec[i]; i++) {
       tl_assert(i < 32);
       tl_assert(isOriginalAtom(mce, exprvec[i]));
-      if (cee->mcx_mask & (1<<i))
+      if (i < cee->mcx_masks.count && ~cee->mcx_masks.masks[i] == 0) {
+         // This mask exists and all bits are set so this is a complete ignore.
          continue;
+      }
       if (typeOfIRExpr(mce->sb->tyenv, exprvec[i]) != Ity_I64)
          mergeTy64 = False;
    }
@@ -2302,14 +2304,28 @@ IRAtom* mkLazyN ( MCEnv* mce,
       tl_assert(isOriginalAtom(mce, exprvec[i]));
       /* Only take notice of this arg if the callee's mc-exclusion
          mask does not say it is to be excluded. */
-      if (cee->mcx_mask & (1<<i)) {
+      if (i < cee->mcx_masks.count && ~cee->mcx_masks.masks[i] == 0) {
          /* the arg is to be excluded from definedness checking.  Do
             nothing. */
          if (0) VG_(printf)("excluding %s(%d)\n", cee->name, i);
       } else {
-         /* calculate the arg's definedness, and pessimistically merge
-            it in. */
-         here = mkPCastTo( mce, mergeTy, expr2vbits(mce, exprvec[i], HuOth) );
+         /* calculate the arg's definedness and merge it in.  curr_mask will
+          * have a 0 in each bit position that is to be ignored.  (This is the
+          * opposite of the mcx which has a 1 for ignore but it's convenient for
+          * the AND below.) */
+         ULong curr_mask = i < cee->mcx_masks.count ?
+                           ~cee->mcx_masks.masks[i] :
+                           ~((ULong)0);
+         IRExpr* curr_mask_expr = mergeTy64 ?
+                              IRExpr_Const(IRConst_U64(curr_mask)) :
+                              IRExpr_Const(IRConst_U32((UInt)curr_mask));
+         IROp opAND = mergeTy64 ? Iop_And64 : Iop_And32;
+         IRExpr* masked_vbits = assignNew(
+             'V', mce, mergeTy,
+             binop(opAND,
+                   curr_mask_expr,
+                   expr2vbits(mce, exprvec[i], HuOth)));
+         here = mkPCastTo( mce, mergeTy, masked_vbits );
          curr = mergeTy64 
                    ? mkUifU64(mce, here, curr)
                    : mkUifU32(mce, here, curr);
@@ -6321,11 +6337,20 @@ void do_shadow_Dirty ( MCEnv* mce, IRDirty* d )
       Note: arguments are evaluated REGARDLESS of the guard expression */
    for (i = 0; d->args[i]; i++) {
       IRAtom* arg = d->args[i];
-      if ( (d->cee->mcx_mask & (1<<i))
+      if ( (i < d->cee->mcx_masks.count && ~d->cee->mcx_masks.masks[i] == 0)
            || UNLIKELY(is_IRExpr_VECRET_or_GSPTR(arg)) ) {
          /* ignore this arg */
       } else {
-         here = mkPCastTo( mce, Ity_I32, expr2vbits(mce, arg, HuOth) );
+         ULong curr_mask = i < d->cee->mcx_masks.count ?
+                           ~d->cee->mcx_masks.masks[i] :
+                           ~((ULong)0);
+         IRExpr* curr_mask_expr = IRExpr_Const(IRConst_U32((UInt)curr_mask));
+         IRExpr* masked_vbits = assignNew(
+             'V', mce, Ity_I32,
+             binop(Iop_And32,
+                   curr_mask_expr,
+                   expr2vbits(mce, arg, HuOth)));
+         here = mkPCastTo( mce, Ity_I32, masked_vbits );
          curr = mkUifU32(mce, here, curr);
       }
    }
@@ -7398,15 +7423,27 @@ static IRAtom* schemeE ( MCEnv* mce, IRExpr* e )
             tl_assert(isOriginalAtom(mce, args[i]));
             /* Only take notice of this arg if the callee's
                mc-exclusion mask does not say it is to be excluded. */
-            if (e->Iex.CCall.cee->mcx_mask & (1<<i)) {
+            if (i < e->Iex.CCall.cee->mcx_masks.count &&
+                ~e->Iex.CCall.cee->mcx_masks.masks[i] == 0) {
                /* the arg is to be excluded from definedness checking.
                   Do nothing. */
                if (0) VG_(printf)("excluding %s(%d)\n",
                                   e->Iex.CCall.cee->name, i);
             } else {
-               /* calculate the arg's definedness, and pessimistically
-                  merge it in. */
-               here = schemeE( mce, args[i] );
+               /* calculate the arg's definedness and merge it in.  curr_mask will
+                * have a 0 in each bit position that is to be ignored.  (This is the
+                * opposite of the mcx which has a 1 for ignore but it's convenient for
+                * the AND below.) */
+               ULong curr_mask = i < e->Iex.CCall.cee->mcx_masks.count ?
+                                 ~e->Iex.CCall.cee->mcx_masks.masks[i] :
+                                 ~((ULong)0);
+               IRExpr* curr_mask_expr = IRExpr_Const(IRConst_U32((UInt)curr_mask));
+               IRExpr* masked_vbits = assignNew(
+                   'V', mce, Ity_I32,
+                   binop(Iop_And32,
+                         curr_mask_expr,
+                         args[i]));
+               here = schemeE( mce, masked_vbits );
                curr = gen_maxU32( mce, curr, here );
             }
          }
@@ -7506,11 +7543,20 @@ static void do_origins_Dirty ( MCEnv* mce, IRDirty* d )
       Note: arguments are evaluated REGARDLESS of the guard expression */
    for (i = 0; d->args[i]; i++) {
       IRAtom* arg = d->args[i];
-      if ( (d->cee->mcx_mask & (1<<i))
+      if ( (i < d->cee->mcx_masks.count && ~d->cee->mcx_masks.masks[i] == 0)
            || UNLIKELY(is_IRExpr_VECRET_or_GSPTR(arg)) ) {
          /* ignore this arg */
       } else {
-         here = schemeE( mce, arg );
+         ULong curr_mask = i < d->cee->mcx_masks.count ?
+                           ~d->cee->mcx_masks.masks[i] :
+                           ~((ULong)0);
+         IRExpr* curr_mask_expr = IRExpr_Const(IRConst_U32((UInt)curr_mask));
+         IRExpr* masked_vbits = assignNew(
+             'V', mce, Ity_I32,
+             binop(Iop_And32,
+                   curr_mask_expr,
+                   expr2vbits(mce, arg, HuOth)));
+         here = schemeE( mce, masked_vbits );
          curr = gen_maxU32( mce, curr, here );
       }
    }
