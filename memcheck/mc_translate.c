@@ -7408,10 +7408,16 @@ static void do_origins_Dirty ( MCEnv* mce, IRDirty* d )
       Note: arguments are evaluated REGARDLESS of the guard expression */
    for (i = 0; d->args[i]; i++) {
       IRAtom* arg = d->args[i];
-      if ( (d->cee->mcx_masks.mask & (1<<i))
+      if ( (i < d->cee->mcx_masks.count && ~d->cee->mcx_masks.masks[i] == 0)
            || UNLIKELY(is_IRExpr_VECRET_or_GSPTR(arg)) ) {
          /* ignore this arg */
       } else {
+         ULong curr_mask = i < d->cee->mcx_masks.count ?
+                           ~d->cee->mcx_masks.masks[i] :
+                           ~((ULong)0);
+         /* TODO: This doesn't support masked_vbits yet. See masked_vbits above
+          * for how this should work. */
+         tl_assert(curr_mask == ~((ULong)0));
          here = schemeE( mce, arg );
          curr = gen_maxU32( mce, curr, here );
       }
