@@ -1684,6 +1684,21 @@ IRExpr* guest_amd64_spechelper ( const HChar* function_name,
                            mkU64(0)));
       }
 
+      if (isU64(cc_op, AMD64G_CC_OP_LOGICQ) && isU64(cond, AMD64CondS)) {
+         /* long long and/or/xor, then S --> (ULong)result[63] */
+         return binop(Iop_And64,
+                      binop(Iop_Shr64, cc_dep1, mkU8(63)),
+                      mkU64(1));
+      }
+      if (isU64(cc_op, AMD64G_CC_OP_LOGICQ) && isU64(cond, AMD64CondNS)) {
+         /* long long and/or/xor, then S --> (ULong) ~ result[63] */
+         return binop(Iop_Xor64,
+                      binop(Iop_And64,
+                            binop(Iop_Shr64, cc_dep1, mkU8(63)),
+                            mkU64(1)),
+                      mkU64(1));
+      }
+
       /*---------------- LOGICL ----------------*/
 
       if (isU64(cc_op, AMD64G_CC_OP_LOGICL) && isU64(cond, AMD64CondZ)) {

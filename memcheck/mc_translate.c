@@ -533,10 +533,22 @@ static IRExpr* definedOfType ( IRType ty ) {
 
 /* add stmt to a bb */
 static inline void stmt ( HChar cat, MCEnv* mce, IRStmt* st ) {
+   static int writing = 0;
+   if (st->tag == Ist_IMark) {
+      if (st->Ist.IMark.addr >= 0x2805df &&
+          st->Ist.IMark.addr <= 0x28061f) {
+         writing = 1;
+      } else {
+         writing = 0;
+      }
+   }
+
    if (mce->trace) {
-      VG_(printf)("  %c: ", cat);
-      ppIRStmt(st);
-      VG_(printf)("\n");
+      if (writing) {
+         VG_(printf)("  %c: ", cat);
+         ppIRStmt(st);
+         VG_(printf)("\n");
+      }
    }
    addStmtToIRSB(mce->sb, st);
 }
@@ -8684,7 +8696,7 @@ IRSB* MC_(instrument) ( VgCallbackClosure* closure,
                         const VexArchInfo* archinfo_host,
                         IRType gWordTy, IRType hWordTy )
 {
-   Bool    verboze = 0||False;
+   Bool    verboze = 1||False;
    Int     i, j, first_stmt;
    IRStmt* st;
    MCEnv   mce;
@@ -8901,9 +8913,11 @@ IRSB* MC_(instrument) ( VgCallbackClosure* closure,
       first_stmt = sb_out->stmts_used;
 
       if (verboze) {
-         VG_(printf)("\n");
-         ppIRStmt(st);
-         VG_(printf)("\n");
+         if (0) {
+            VG_(printf)("\n");
+            ppIRStmt(st);
+            VG_(printf)("\n");
+         }
       }
 
       if (MC_(clo_mc_level) == 3) {
@@ -9020,9 +9034,11 @@ IRSB* MC_(instrument) ( VgCallbackClosure* closure,
    first_stmt = sb_out->stmts_used;
 
    if (verboze) {
-      VG_(printf)("sb_in->next = ");
-      ppIRExpr(sb_in->next);
-      VG_(printf)("\n\n");
+      if (0) {
+         VG_(printf)("sb_in->next = ");
+         ppIRExpr(sb_in->next);
+         VG_(printf)("\n\n");
+      }
    }
 
    complainIfUndefined( &mce, sb_in->next, NULL );
