@@ -3474,7 +3474,18 @@ static Bool eqTmpOrConst ( TmpOrConst* tc1, TmpOrConst* tc2 )
 */
 static Bool eq_mcx_masks ( McxMasks masks1, McxMasks masks2 )
 {
-   return masks1.mask == masks2.mask;
+   if (masks1.mask != masks2.mask) {
+      return False;
+   }
+   Int i;
+   for (i = 0; i < masks1.count || i < masks2.count; i++) {
+      ULong mask1 = i < masks1.count ? masks1.masks[i] : 0;
+      ULong mask2 = i < masks2.count ? masks2.masks[i] : 0;
+      if (mask1 != mask2) {
+         return False;
+      }
+   }
+   return True;
 }
 
 static Bool eqIRCallee ( IRCallee* cee1, IRCallee* cee2 )

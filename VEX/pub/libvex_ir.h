@@ -354,6 +354,8 @@ extern Bool eqIRConst ( const IRConst*, const IRConst* );
 typedef
    struct {
       UInt   mask;
+      Int    count; /* How many elements in the masks array. */
+      ULong* masks;
    }
    McxMasks;
 

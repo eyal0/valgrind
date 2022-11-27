@@ -96,8 +96,17 @@ void ppIRCallee ( const IRCallee* ce )
    vex_printf("%s", ce->name);
    if (ce->regparms > 0)
       vex_printf("[rp=%d]", ce->regparms);
-   if (ce->mcx_masks.mask > 0)
-      vex_printf("[mcx=0x%x]", ce->mcx_masks.mask);
+   if (ce->mcx_masks.count > 0) {
+      Int i;
+      vex_printf("[mcx=");
+      for (i = 0; i < ce->mcx_masks.count; i++) {
+         if (i > 0) {
+            vex_printf(",");
+         }
+         vex_printf("0x%llx", ce->mcx_masks.masks[i]);
+      }
+      vex_printf("]");
+   }
    vex_printf("{%p}", (void*)ce->addr);
 }
 
@@ -2319,11 +2328,34 @@ IRConst* IRConst_V256 ( UInt con )
 
 /* Constructors -- IRCallee */
 
+static Int count_leading_zeros ( UInt x ) {
+   int n = 32;
+   UInt y;
+
+   y = x >>16; if (y != 0) { n = n -16; x = y; }
+   y = x >> 8; if (y != 0) { n = n - 8; x = y; }
+   y = x >> 4; if (y != 0) { n = n - 4; x = y; }
+   y = x >> 2; if (y != 0) { n = n - 2; x = y; }
+   y = x >> 1; if (y != 0) return n - 2;
+   return n - x;
+}
+
 McxMasks mk_mcx_masks ( UInt mcx_mask )
 {
    McxMasks mcx_masks;
+   Int i;
 
    mcx_masks.mask = mcx_mask;
+   mcx_masks.count = 32 - count_leading_zeros(mcx_mask);
+   mcx_masks.masks = LibVEX_Alloc_inline(
+       sizeof(mcx_masks.masks[0]) *
+       mcx_masks.count);
+   for (i = 0; i < mcx_masks.count; i++) {
+      mcx_masks.masks[i] = 0;
+      if ((mcx_mask >> i) & 1) {
+         mcx_masks.masks[i] = ~mcx_masks.masks[i];
+      }
+   }
    return mcx_masks;
 }
 
@@ -2875,8 +2907,15 @@ IRConst* deepCopyIRConst ( const IRConst* c )
 
 IRCallee* deepCopyIRCallee ( const IRCallee* ce )
 {
+   int i;
    IRCallee* ce2 = mkIRCallee(ce->regparms, ce->name, ce->addr);
    ce2->mcx_masks.mask = ce->mcx_masks.mask;
+   ce2->mcx_masks.count = ce->mcx_masks.count;
+   ce2->mcx_masks.masks = LibVEX_Alloc_inline(
+      sizeof(ce->mcx_masks.masks[0]) * ce->mcx_masks.count);
+   for (i = 0; i < ce->mcx_masks.count; i++) {
+      ce2->mcx_masks.masks[i] = ce->mcx_masks.masks[i];
+   }
    return ce2;
 }
 
