@@ -1298,7 +1298,7 @@ IRAtom* mkLazy2 ( MCEnv* mce, IRType finalVty, IRAtom* va1, IRAtom* va2 )
 /* Do the lazy propagation game from a null-terminated vector of
    atoms.  This is presumably the arguments to a helper call, so the
    IRCallee info is also supplied in order that we can know which
-   arguments should be ignored (via the .mcx_mask field). 
+   arguments should be ignored (via the .mcx_masks field).
 */
 static
 IRAtom* mkLazyN ( MCEnv* mce, 

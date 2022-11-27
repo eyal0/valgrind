@@ -3468,12 +3468,21 @@ static Bool eqTmpOrConst ( TmpOrConst* tc1, TmpOrConst* tc2 )
    }
 }
 
+/*
+  Check that two McxMasks are the same.  We'll use a relaxed sameness test that
+  understands that extra masks beyond the count are as if they are zero.
+*/
+static Bool eq_mcx_masks ( McxMasks masks1, McxMasks masks2 )
+{
+   return masks1.mask == masks2.mask;
+}
+
 static Bool eqIRCallee ( IRCallee* cee1, IRCallee* cee2 )
 {
    Bool eq = cee1->addr == cee2->addr;
    if (eq) {
       vassert(cee1->regparms == cee2->regparms);
-      vassert(cee1->mcx_mask == cee2->mcx_mask);
+      vassert(eq_mcx_masks(cee1->mcx_masks, cee2->mcx_masks));
       /* Names should be the same too, but we don't bother to
          check. */
    }

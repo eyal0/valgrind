@@ -2150,7 +2150,7 @@ IRAtom* mkLazy4 ( MCEnv* mce, IRType finalVty,
 /* Do the lazy propagation game from a null-terminated vector of
    atoms.  This is presumably the arguments to a helper call, so the
    IRCallee info is also supplied in order that we can know which
-   arguments should be ignored (via the .mcx_mask field). 
+   arguments should be ignored (via the .mcx_masks field).
 */
 static
 IRAtom* mkLazyN ( MCEnv* mce, 
@@ -2168,7 +2168,7 @@ IRAtom* mkLazyN ( MCEnv* mce,
    for (i = 0; exprvec[i]; i++) {
       tl_assert(i < 32);
       tl_assert(isOriginalAtom(mce, exprvec[i]));
-      if (cee->mcx_mask & (1<<i))
+      if (cee->mcx_masks.mask & (1<<i))
          continue;
       if (typeOfIRExpr(mce->sb->tyenv, exprvec[i]) != Ity_I64)
          mergeTy64 = False;
@@ -2182,7 +2182,7 @@ IRAtom* mkLazyN ( MCEnv* mce,
       tl_assert(isOriginalAtom(mce, exprvec[i]));
       /* Only take notice of this arg if the callee's mc-exclusion
          mask does not say it is to be excluded. */
-      if (cee->mcx_mask & (1<<i)) {
+      if (cee->mcx_masks.mask & (1<<i)) {
          /* the arg is to be excluded from definedness checking.  Do
             nothing. */
          if (0) VG_(printf)("excluding %s(%d)\n", cee->name, i);
@@ -2190,7 +2190,7 @@ IRAtom* mkLazyN ( MCEnv* mce,
          /* calculate the arg's definedness, and pessimistically merge
             it in. */
          here = mkPCastTo( mce, mergeTy, expr2vbits(mce, exprvec[i], HuOth) );
-         curr = mergeTy64 
+         curr = mergeTy64
                    ? mkUifU64(mce, here, curr)
                    : mkUifU32(mce, here, curr);
       }
@@ -6192,7 +6192,7 @@ void do_shadow_Dirty ( MCEnv* mce, IRDirty* d )
       Note: arguments are evaluated REGARDLESS of the guard expression */
    for (i = 0; d->args[i]; i++) {
       IRAtom* arg = d->args[i];
-      if ( (d->cee->mcx_mask & (1<<i))
+      if ( (d->cee->mcx_masks.mask & (1<<i))
            || UNLIKELY(is_IRExpr_VECRET_or_GSPTR(arg)) ) {
          /* ignore this arg */
       } else {
@@ -7269,7 +7269,7 @@ static IRAtom* schemeE ( MCEnv* mce, IRExpr* e )
             tl_assert(isOriginalAtom(mce, args[i]));
             /* Only take notice of this arg if the callee's
                mc-exclusion mask does not say it is to be excluded. */
-            if (e->Iex.CCall.cee->mcx_mask & (1<<i)) {
+            if (e->Iex.CCall.cee->mcx_masks.mask & (1<<i)) {
                /* the arg is to be excluded from definedness checking.
                   Do nothing. */
                if (0) VG_(printf)("excluding %s(%d)\n",
@@ -7377,7 +7377,7 @@ static void do_origins_Dirty ( MCEnv* mce, IRDirty* d )
       Note: arguments are evaluated REGARDLESS of the guard expression */
    for (i = 0; d->args[i]; i++) {
       IRAtom* arg = d->args[i];
-      if ( (d->cee->mcx_mask & (1<<i))
+      if ( (d->cee->mcx_masks.mask & (1<<i))
            || UNLIKELY(is_IRExpr_VECRET_or_GSPTR(arg)) ) {
          /* ignore this arg */
       } else {

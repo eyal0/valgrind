@@ -96,8 +96,8 @@ void ppIRCallee ( const IRCallee* ce )
    vex_printf("%s", ce->name);
    if (ce->regparms > 0)
       vex_printf("[rp=%d]", ce->regparms);
-   if (ce->mcx_mask > 0)
-      vex_printf("[mcx=0x%x]", ce->mcx_mask);
+   if (ce->mcx_masks.mask > 0)
+      vex_printf("[mcx=0x%x]", ce->mcx_masks.mask);
    vex_printf("{%p}", (void*)ce->addr);
 }
 
@@ -2319,13 +2319,21 @@ IRConst* IRConst_V256 ( UInt con )
 
 /* Constructors -- IRCallee */
 
+McxMasks mk_mcx_masks ( UInt mcx_mask )
+{
+   McxMasks mcx_masks;
+
+   mcx_masks.mask = mcx_mask;
+   return mcx_masks;
+}
+
 IRCallee* mkIRCallee ( Int regparms, const HChar* name, void* addr )
 {
    IRCallee* ce = LibVEX_Alloc_inline(sizeof(IRCallee));
    ce->regparms = regparms;
    ce->name     = name;
    ce->addr     = addr;
-   ce->mcx_mask = 0;
+   ce->mcx_masks = mk_mcx_masks(0);
    vassert(regparms >= 0 && regparms <= 3);
    vassert(name != NULL);
    vassert(addr != 0);
@@ -2868,7 +2876,7 @@ IRConst* deepCopyIRConst ( const IRConst* c )
 IRCallee* deepCopyIRCallee ( const IRCallee* ce )
 {
    IRCallee* ce2 = mkIRCallee(ce->regparms, ce->name, ce->addr);
-   ce2->mcx_mask = ce->mcx_mask;
+   ce2->mcx_masks.mask = ce->mcx_masks.mask;
    return ce2;
 }
 

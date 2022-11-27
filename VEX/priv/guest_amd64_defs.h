@@ -381,7 +381,7 @@ extern void amd64g_dirtyhelper_AESKEYGENASSIST (
 
    (2) When passing the thunk components to an evaluation function
        (calculate_condition, calculate_eflags, calculate_eflags_c) the
-       IRCallee's mcx_mask must be set so as to exclude from
+       IRCallee's mcx_masks must be set so as to exclude from
        consideration all passed args except CC_DEP1 and CC_DEP2.
 
    Strictly speaking only (2) is necessary for correctness.  However,
