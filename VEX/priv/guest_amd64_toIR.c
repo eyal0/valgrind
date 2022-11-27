@@ -1769,8 +1769,19 @@ static IRExpr* mk_amd64g_calculate_condition ( AMD64Condcode cond )
            args
         );
    /* Exclude the requested condition, OP and NDEP from definedness
-      checking.  We're only interested in DEP1 and DEP2. */
+      checking.  We're only interested in DEP1 and DEP2 usually. */
    call->Iex.CCall.cee->mcx_masks = mk_mcx_masks((1<<0) | (1<<1) | (1<<4));
+
+   // The mask that mk_mcx_masks made is surely large enough to include
+   vassert(call->Iex.CCall.cee->mcx_masks.count >= 2);
+   switch (cond) {
+      case AMD64CondS:
+      case AMD64CondNS:
+         /* Only the MSB matters when looking at the sign bit so mark all others
+          * as excluded. */
+         call->Iex.CCall.cee->mcx_masks.masks[2] = (~((ULong)0) >> 1);
+         break;
+   }
    return unop(Iop_64to1, call);
 }
 
