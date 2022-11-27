@@ -7291,14 +7291,23 @@ static IRAtom* schemeE ( MCEnv* mce, IRExpr* e )
             tl_assert(isOriginalAtom(mce, args[i]));
             /* Only take notice of this arg if the callee's
                mc-exclusion mask does not say it is to be excluded. */
-            if (e->Iex.CCall.cee->mcx_masks.mask & (1<<i)) {
+            if (i < e->Iex.CCall.cee->mcx_masks.count &&
+                ~e->Iex.CCall.cee->mcx_masks.masks[i] == 0) {
                /* the arg is to be excluded from definedness checking.
                   Do nothing. */
                if (0) VG_(printf)("excluding %s(%d)\n",
                                   e->Iex.CCall.cee->name, i);
             } else {
-               /* calculate the arg's definedness, and pessimistically
-                  merge it in. */
+               /* calculate the arg's definedness and merge it in.  curr_mask will
+                * have a 0 in each bit position that is to be ignored.  (This is the
+                * opposite of the mcx which has a 1 for ignore but it's convenient for
+                * the AND below.) */
+               ULong curr_mask = i < e->Iex.CCall.cee->mcx_masks.count ?
+                                 ~e->Iex.CCall.cee->mcx_masks.masks[i] :
+                                 ~((ULong)0);
+               /* TODO: This doesn't support masked_vbits yet. See masked_vbits
+                * above for how this should work. */
+               tl_assert(curr_mask == ~((ULong)0));
                here = schemeE( mce, args[i] );
                curr = gen_maxU32( mce, curr, here );
             }
