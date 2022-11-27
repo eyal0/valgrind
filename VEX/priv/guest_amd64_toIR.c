@@ -21897,7 +21897,7 @@ Long dis_ESC_0F (
    case 0x46: /* CMOVBEb/CMOVNAb (cmov below or equal) */
    case 0x47: /* CMOVNBEb/CMOVAb (cmov not below or equal) */
    case 0x48: /* CMOVSb (cmov negative) */
-   case 0x49: /* CMOVSb (cmov not negative) */
+   case 0x49: /* CMOVNSb (cmov not negative) */
    case 0x4A: /* CMOVP (cmov parity even) */
    case 0x4B: /* CMOVNP (cmov parity odd) */
    case 0x4C: /* CMOVLb/CMOVNGEb (cmov less) */
