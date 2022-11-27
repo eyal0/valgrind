@@ -2168,8 +2168,10 @@ IRAtom* mkLazyN ( MCEnv* mce,
    for (i = 0; exprvec[i]; i++) {
       tl_assert(i < 32);
       tl_assert(isOriginalAtom(mce, exprvec[i]));
-      if (cee->mcx_masks.mask & (1<<i))
+      if (i < cee->mcx_masks.count && ~cee->mcx_masks.masks[i] == 0) {
+         // This mask exists and all bits are set so this is a complete ignore.
          continue;
+      }
       if (typeOfIRExpr(mce->sb->tyenv, exprvec[i]) != Ity_I64)
          mergeTy64 = False;
    }
@@ -2182,17 +2184,31 @@ IRAtom* mkLazyN ( MCEnv* mce,
       tl_assert(isOriginalAtom(mce, exprvec[i]));
       /* Only take notice of this arg if the callee's mc-exclusion
          mask does not say it is to be excluded. */
-      if (cee->mcx_masks.mask & (1<<i)) {
+      if (i < cee->mcx_masks.count && ~cee->mcx_masks.masks[i] == 0) {
          /* the arg is to be excluded from definedness checking.  Do
             nothing. */
          if (0) VG_(printf)("excluding %s(%d)\n", cee->name, i);
       } else {
-         /* calculate the arg's definedness, and pessimistically merge
-            it in. */
-         here = mkPCastTo( mce, mergeTy, expr2vbits(mce, exprvec[i], HuOth) );
+         /* calculate the arg's definedness and merge it in.  curr_mask will
+          * have a 0 in each bit position that is to be ignored.  (This is the
+          * opposite of the mcx which has a 1 for ignore but it's convenient for
+          * the AND below.) */
+         ULong curr_mask = i < cee->mcx_masks.count ?
+                           ~cee->mcx_masks.masks[i] :
+                           ~((ULong)0);
+         IRExpr* curr_mask_expr = mergeTy64 ?
+                                  IRExpr_Const(IRConst_U64(curr_mask)) :
+                                  IRExpr_Const(IRConst_U32((UInt)curr_mask));
+         IROp opAND = mergeTy64 ? Iop_And64 : Iop_And32;
+         IRExpr* masked_vbits = assignNew(
+             'V', mce, mergeTy,
+             binop(opAND,
+                   curr_mask_expr,
+                   expr2vbits(mce, exprvec[i], HuOth)));
+         here = mkPCastTo( mce, mergeTy, masked_vbits );
          curr = mergeTy64
-                   ? mkUifU64(mce, here, curr)
-                   : mkUifU32(mce, here, curr);
+                ? mkUifU64(mce, here, curr)
+                : mkUifU32(mce, here, curr);
       }
    }
    return mkPCastTo(mce, finalVtype, curr );
