@@ -106,6 +106,7 @@
 /cachegrind/tests/cachegrind.out.*
 /cachegrind/tests/chdir
 /cachegrind/tests/clreq
+/cachegrind/tests/clreq2
 /cachegrind/tests/dlclose
 /cachegrind/tests/wrap5
 
@@ -1353,6 +1354,7 @@
 /memcheck/tests/freebsd/capsicum
 /memcheck/tests/freebsd/chflags
 /memcheck/tests/freebsd/chmod_chown
+/memcheck/tests/freebsd/close_range
 /memcheck/tests/freebsd/delete_sized_mismatch
 /memcheck/tests/freebsd/errno_aligned_allocs
 /memcheck/tests/freebsd/eventfd1
@@ -1366,6 +1368,8 @@
 /memcheck/tests/freebsd/getfsstat
 /memcheck/tests/freebsd/inlinfo
 /memcheck/tests/freebsd/inlinfo_nested.so
+/memcheck/tests/freebsd/kqueue
+/memcheck/tests/freebsd/kqueuex
 /memcheck/tests/freebsd/linkat
 /memcheck/tests/freebsd/memalign
 /memcheck/tests/freebsd/misc
@@ -1374,6 +1378,7 @@
 /memcheck/tests/freebsd/revoke
 /memcheck/tests/freebsd/scalar
 /memcheck/tests/freebsd/scalar_13_plus
+/memcheck/tests/freebsd/scalar_15_plus
 /memcheck/tests/freebsd/scalar_abort2
 /memcheck/tests/freebsd/scalar_fork
 /memcheck/tests/freebsd/scalar_pdfork
@@ -1386,6 +1391,8 @@
 /memcheck/tests/freebsd/stat
 /memcheck/tests/freebsd/statfs
 /memcheck/tests/freebsd/static_allocs
+/memcheck/tests/freebsd/timerfd
+/memcheck/tests/freebsd/timingsafe
 /memcheck/tests/freebsd/utimens
 /memcheck/tests/freebsd/utimes
 

@@ -3780,7 +3780,7 @@ static HReg iselVecExpr_wrk ( ISelEnv* env, const IRExpr* e )
 
             Instead, we will make a copy and shift all the 16-bit words to the
             *right* by 8 and then to the left by 8 plus the shift amount.  That
-            will get use the correct answer for the upper 8 bits of each 16-bit
+            will get us the correct answer for the upper 8 bits of each 16-bit
             word and zero elsewhere.
 
             Then we will shift all the 16-bit words in the original to the left
