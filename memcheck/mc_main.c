@@ -2704,7 +2704,7 @@ static OCacheLine* find_OCacheLine_SLOW ( Addr a )
    UWord setno   = (a >> OC_BITS_PER_LINE) & (OC_N_SETS - 1);
    UWord tagmask = ~((1 << OC_BITS_PER_LINE) - 1);
    UWord tag     = a & tagmask;
-   tl_assert(setno >= 0 && setno < OC_N_SETS);
+   tl_assert(setno < OC_N_SETS);
 
    /* we already tried line == 0; skip therefore. */
    for (line = 1; line < OC_LINES_PER_SET; line++) {
@@ -2946,8 +2946,7 @@ void make_aligned_word64_undefined_w_otag ( Addr a, UInt otag )
    //// Set the origins for a+0 .. a+7
    { OCacheLine* line;
      UWord lineoff = oc_line_offset(a);
-     tl_assert(lineoff >= 0
-               && lineoff < OC_W32S_PER_LINE -1/*'cos 8-aligned*/);
+     tl_assert(lineoff < OC_W32S_PER_LINE -1/*'cos 8-aligned*/);
      line = find_OCacheLine( a );
      line->u.main.descr[lineoff+0] = 0xF;
      line->u.main.descr[lineoff+1] = 0xF;
@@ -3711,7 +3710,7 @@ static inline UInt convert_nia_to_ecu ( Addr nia )
 
    stats__nia_cache_queries++;
    i = nia % N_NIA_TO_ECU_CACHE;
-   tl_assert(i >= 0 && i < N_NIA_TO_ECU_CACHE);
+   tl_assert(i < N_NIA_TO_ECU_CACHE);
 
    if (LIKELY( nia_to_ecu_cache[i].nia0 == nia ))
       return nia_to_ecu_cache[i].ecu0;
@@ -7120,7 +7119,7 @@ static Bool mc_handle_client_request ( ThreadId tid, UWord* arg, UWord* ret )
              (cgbs[arg[2]].start == 0 && cgbs[arg[2]].size == 0)) {
             *ret = 1;
          } else {
-            tl_assert(arg[2] >= 0 && arg[2] < cgb_used);
+            tl_assert(arg[2] < cgb_used);
             cgbs[arg[2]].start = cgbs[arg[2]].size = 0;
             VG_(free)(cgbs[arg[2]].desc);
             cgb_discards++;
@@ -7279,6 +7278,12 @@ static Bool mc_handle_client_request ( ThreadId tid, UWord* arg, UWord* ret )
             MC_(record_bad_alignment) ( tid, aligned_alloc_info->orig_alignment , 0U, " (should be non-zero and a power of 2)" );
          }
          break;
+      case AllocKindDeleteDefault:
+         mc = VG_(HT_lookup) ( MC_(malloc_list), (UWord)aligned_alloc_info->mem );
+         if (mc && mc->alignB) {
+            MC_(record_align_mismatch_error) ( tid, mc, 0U, True, "new/delete");
+         }
+         break;
       case AllocKindDeleteAligned:
          if (aligned_alloc_info->orig_alignment == 0 ||
              (aligned_alloc_info->orig_alignment & (aligned_alloc_info->orig_alignment - 1)) != 0) {
@@ -7286,7 +7291,13 @@ static Bool mc_handle_client_request ( ThreadId tid, UWord* arg, UWord* ret )
          }
          mc = VG_(HT_lookup) ( MC_(malloc_list), (UWord)aligned_alloc_info->mem );
          if (mc && aligned_alloc_info->orig_alignment != mc->alignB) {
-            MC_(record_align_mismatch_error) ( tid, mc, aligned_alloc_info->orig_alignment, "new/delete");
+            MC_(record_align_mismatch_error) ( tid, mc, aligned_alloc_info->orig_alignment, False, "new/delete");
+         }
+         break;
+      case AllocKindVecDeleteDefault:
+         mc = VG_(HT_lookup) ( MC_(malloc_list), (UWord)aligned_alloc_info->mem );
+         if (mc && mc->alignB) {
+            MC_(record_align_mismatch_error) ( tid, mc, 0U, True, "new[]/delete[]");
          }
          break;
       case AllocKindVecDeleteAligned:
@@ -7296,7 +7307,7 @@ static Bool mc_handle_client_request ( ThreadId tid, UWord* arg, UWord* ret )
          }
          mc = VG_(HT_lookup) ( MC_(malloc_list), (UWord)aligned_alloc_info->mem );
          if (mc && aligned_alloc_info->orig_alignment != mc->alignB) {
-            MC_(record_align_mismatch_error) ( tid, mc, aligned_alloc_info->orig_alignment, "new[]/delete[]");
+            MC_(record_align_mismatch_error) ( tid, mc, aligned_alloc_info->orig_alignment, False, "new[]/delete[]");
          }
          break;
       case AllocKindDeleteSizedAligned:
@@ -7305,7 +7316,7 @@ static Bool mc_handle_client_request ( ThreadId tid, UWord* arg, UWord* ret )
             MC_(record_size_mismatch_error) ( tid, mc, aligned_alloc_info->size, "new/delete");
          }
          if (mc && aligned_alloc_info->orig_alignment != mc->alignB) {
-            MC_(record_align_mismatch_error) ( tid, mc, aligned_alloc_info->orig_alignment, "new/delete");
+            MC_(record_align_mismatch_error) ( tid, mc, aligned_alloc_info->orig_alignment, False, "new/delete");
          }
          if (aligned_alloc_info->orig_alignment == 0 ||
              (aligned_alloc_info->orig_alignment & (aligned_alloc_info->orig_alignment - 1)) != 0) {
@@ -7318,7 +7329,7 @@ static Bool mc_handle_client_request ( ThreadId tid, UWord* arg, UWord* ret )
             MC_(record_size_mismatch_error) ( tid, mc, aligned_alloc_info->size, "new[]/delete[]" );
          }
          if (mc && aligned_alloc_info->orig_alignment != mc->alignB) {
-            MC_(record_align_mismatch_error) ( tid, mc, aligned_alloc_info->orig_alignment, "new[]/delete[]");
+            MC_(record_align_mismatch_error) ( tid, mc, aligned_alloc_info->orig_alignment, False, "new[]/delete[]");
          }
          if (aligned_alloc_info->orig_alignment == 0 ||
              (aligned_alloc_info->orig_alignment & (aligned_alloc_info->orig_alignment - 1)) != 0) {
@@ -7424,11 +7435,9 @@ static Bool mc_handle_client_request ( ThreadId tid, UWord* arg, UWord* ret )
       }
 
       default:
-         VG_(message)(
-            Vg_UserMsg,
-            "Warning: unknown memcheck client request code %llx\n",
-            (ULong)arg[0]
-         );
+         VG_(message)(Vg_UserMsg,
+                      "Warning: unknown memcheck client request code %llx\n",
+                      (ULong)arg[0]);
          return False;
    }
    return True;

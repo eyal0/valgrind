@@ -748,7 +748,7 @@ DiCfSI_m* ML_(get_cfsi_m) (const DebugInfo* di, UInt pos)
 {
    UInt cfsi_m_ix;
 
-   vg_assert(pos >= 0 && pos < di->cfsi_used);
+   vg_assert(pos < di->cfsi_used);
    switch (di->sizeof_cfsi_m_ix) {
       case 1: cfsi_m_ix = ((UChar*)  di->cfsi_m_ix)[pos]; break;
       case 2: cfsi_m_ix = ((UShort*) di->cfsi_m_ix)[pos]; break;
@@ -2066,7 +2066,6 @@ static void canonicaliseLoctab ( struct _DebugInfo* di )
    sort_loctab_and_loctab_fndn_ix (di);
 
    for (i = 0; i < ((Word)di->loctab_used)-1; i++) {
-      vg_assert(di->loctab[i].size < 10000);
       /* If two adjacent entries overlap, truncate the first. */
       if (di->loctab[i].addr + di->loctab[i].size > di->loctab[i+1].addr) {
          /* Do this in signed int32 because the actual .size fields

@@ -685,7 +685,7 @@ static ThreadId map_threads_maybe_reverse_lookup_SLOW ( Thread* thr )
    ThreadId tid;
    tl_assert(HG_(is_sane_Thread)(thr));
    /* Check nobody used the invalid-threadid slot */
-   tl_assert(VG_INVALID_THREADID >= 0 && VG_INVALID_THREADID < VG_N_THREADS);
+   tl_assert(VG_INVALID_THREADID < VG_N_THREADS);
    tl_assert(map_threads[VG_INVALID_THREADID] == NULL);
    tid = thr->coretid;
    tl_assert(HG_(is_sane_ThreadId)(tid));
@@ -3625,9 +3625,9 @@ static void univ_laog_do_GC ( void ) {
    links = NULL;
    while (VG_(nextIterFM)( laog, NULL, (UWord*)&links )) {
       tl_assert(links);
-      tl_assert(links->inns >= 0 && links->inns < univ_laog_cardinality);
+      tl_assert(links->inns < univ_laog_cardinality);
       univ_laog_seen[links->inns] = True;
-      tl_assert(links->outs >= 0 && links->outs < univ_laog_cardinality);
+      tl_assert(links->outs < univ_laog_cardinality);
       univ_laog_seen[links->outs] = True;
       links = NULL;
    }
@@ -5747,8 +5747,10 @@ Bool hg_handle_client_request ( ThreadId tid, UWord* args, UWord* ret)
 
       default:
          /* Unhandled Helgrind client request! */
-         tl_assert2(0, "unhandled Helgrind client request 0x%lx",
-                       args[0]);
+         VG_(message)(Vg_UserMsg,
+                      "Warning: unknown Helgrind client request code %llx\n",
+                      (ULong)args[0]);
+         return False;
    }
 
    return True;
