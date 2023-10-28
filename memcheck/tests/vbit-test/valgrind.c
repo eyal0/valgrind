@@ -138,4 +138,9 @@ valgrind_execute_test(const irop_t *op, test_data_t *data)
       print_opnd(stdout, &data->result);
       printf("\n");
    }
+
+   // Now that we have the vbits recorded, clear all the vbits.
+   test_data_t all_zero = {};
+   unsigned rc = VALGRIND_SET_VBITS(data, &all_zero, sizeof(*data));
+   assert(rc==1);
 }
