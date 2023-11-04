@@ -140,7 +140,7 @@ valgrind_execute_test(const irop_t *op, test_data_t *data)
    }
 
    // Now that we have the vbits recorded, clear all the vbits.
-   test_data_t all_zero = {};
-   unsigned rc = VALGRIND_SET_VBITS(data, &all_zero, sizeof(*data));
-   assert(rc==1);
+   for (i = 0; i < num_operands; ++i) {
+      VALGRIND_MAKE_MEM_DEFINED(&data->opnds[i].value, sizeof(data->opnds[i].value));
+   }
 }
