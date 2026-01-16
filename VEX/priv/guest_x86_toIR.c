@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -3418,14 +3418,14 @@ static IRTemp gen_LZCNT ( IRType ty, IRTemp src )
           binop(Iop_Shl32, mkexpr(src32),
                            mkU8(32 - 8 * sizeofIRType(ty))));
 
-   // Clz32 has undefined semantics when its input is zero, so
-   // special-case around that.
+   /* Guard against 0 input value. Use ClzNat32 operator for all other
+      values */
    IRTemp res32 = newTemp(Ity_I32);
    assign(res32,
           IRExpr_ITE(
              binop(Iop_CmpEQ32, mkexpr(src32x), mkU32(0)),
              mkU32(8 * sizeofIRType(ty)),
-             unop(Iop_Clz32, mkexpr(src32x))
+             unop(Iop_ClzNat32, mkexpr(src32x))
    ));
 
    IRTemp res = newTemp(ty);
@@ -6512,18 +6512,16 @@ UInt dis_bs_E_G ( UChar sorb, Int sz, Int delta, Bool fwds )
       elimination of previous stores to this field work better. */
    stmt( IRStmt_Put( OFFB_CC_NDEP, mkU32(0) ));
 
-   /* Result: iff source value is zero, we can't use
-      Iop_Clz32/Iop_Ctz32 as they have no defined result in that case.
-      But anyway, Intel x86 semantics say the result is undefined in
-      such situations.  Hence handle the zero case specially. */
+   /* Intel x86 semantics say the result is undefined iff source value is
+      zero. Hence handle the zero case specially. */
 
    /* Bleh.  What we compute:
 
-          bsf32:  if src == 0 then 0 else  Ctz32(src)
-          bsr32:  if src == 0 then 0 else  31 - Clz32(src)
+          bsf32:  if src == 0 then 0 else  CtzNat32(src)
+          bsr32:  if src == 0 then 0 else  31 - ClzNat32(src)
 
-          bsf16:  if src == 0 then 0 else  Ctz32(16Uto32(src))
-          bsr16:  if src == 0 then 0 else  31 - Clz32(16Uto32(src))
+          bsf16:  if src == 0 then 0 else  CtzNat32(16Uto32(src))
+          bsr16:  if src == 0 then 0 else  31 - ClzNat32(16Uto32(src))
 
       First, widen src to 32 bits if it is not already.
 
@@ -6540,10 +6538,10 @@ UInt dis_bs_E_G ( UChar sorb, Int sz, Int delta, Bool fwds )
            IRExpr_ITE( 
               mkexpr(srcB),
               /* src != 0 */
-              fwds ? unop(Iop_Ctz32, mkexpr(src32))
+              fwds ? unop(Iop_CtzNat32, mkexpr(src32))
                    : binop(Iop_Sub32, 
                            mkU32(31), 
-                           unop(Iop_Clz32, mkexpr(src32))),
+                           unop(Iop_ClzNat32, mkexpr(src32))),
               /* src == 0 -- leave dst unchanged */
               widenUto32( getIReg( sz, gregOfRM(modrm) ) )
            )
@@ -8198,7 +8196,7 @@ DisResult disInstr_X86_WRK (
          delta += 5;
          goto decode_success;
       }
-      /* Don't barf on recent binutils padding,
+      /* Don't barf on recent (2010) binutils padding,
          all variants of which are: nopw %cs:0x0(%eax,%eax,1)
          66 2e 0f 1f 84 00 00 00 00 00
          66 66 2e 0f 1f 84 00 00 00 00 00
@@ -8219,6 +8217,26 @@ DisResult disInstr_X86_WRK (
              && code[data16_cnt + 8] == 0x00 ) {
             DIP("nopw %%cs:0x0(%%eax,%%eax,1)\n");
             delta += 9 + data16_cnt;
+            goto decode_success;
+         }
+      }
+
+      /* bug478624 GNU binutils uses a leal of esi into itself with
+         a zero offset and CS prefix as an 8 byte no-op (Dec 2023).
+         Since the CS prefix is hardly ever used we don't do much
+         to decode it, just a few cases for conditional branches.
+         So add handling here with other pseudo-no-ops.
+       */
+      if (code[0] == 0x2E && code[1] == 0x8D) {
+         if (code[2] == 0x74 && code[3] == 0x26 && code[4] == 0x00) {
+            DIP("leal %%cs:0(%%esi,%%eiz,1),%%esi\n");
+            delta += 5;
+            goto decode_success;
+         }
+         if (code[2] == 0xB4 && code[3] == 0x26 && code[4] == 0x00
+             && code[5] == 0x00 && code[6] == 0x00 && code[7] == 0x00) {
+            DIP("leal %%cs:0(%%esi,%%eiz,1),%%esi\n");
+            delta += 8;
             goto decode_success;
          }
       }
@@ -12921,6 +12939,168 @@ DisResult disInstr_X86_WRK (
    /* --- start of the SSE4 decoder                    --- */
    /* ---------------------------------------------------- */
 
+   /* 66 0F 3A 22 /r ib = PINSRD xmm1, r/m32, imm8
+      Extract Doubleword int from gen.reg/mem32 and insert into xmm1 */
+   if ( sz == 2
+        && insn[0] == 0x0F && insn[1] == 0x3A && insn[2] == 0x22 ) {
+
+      Int imm8_10;
+      IRTemp src_elems = newTemp(Ity_I32);
+      IRTemp src_vec   = newTemp(Ity_V128);
+      IRTemp z32       = newTemp(Ity_I32);
+
+      modrm = insn[3];
+
+      if ( epartIsReg( modrm ) ) {
+         imm8_10 = (Int)(insn[3+1] & 3);
+         assign( src_elems, getIReg( 4, eregOfRM(modrm) ) );
+         delta += 3+1+1;
+         DIP( "pinsrd $%d, %s,%s\n", imm8_10,
+              nameIReg( 4, eregOfRM(modrm) ),
+              nameXMMReg( gregOfRM(modrm) ) );
+      } else {
+         addr = disAMode( &alen, sorb, delta+3, dis_buf );
+         imm8_10 = (Int)(insn[3+alen] & 3);
+         assign( src_elems, loadLE( Ity_I32, mkexpr(addr) ) );
+         delta += 3+alen+1;
+         DIP( "pinsrd $%d, %s,%s\n", 
+              imm8_10, dis_buf, nameXMMReg( gregOfRM(modrm) ) );
+      }
+
+      assign(z32, mkU32(0));
+
+      UShort mask = 0;
+      switch (imm8_10) {
+         case 3:  mask = 0x0FFF;
+                  assign(src_vec, mk128from32s(src_elems, z32, z32, z32));
+                  break;
+         case 2:  mask = 0xF0FF;
+                  assign(src_vec, mk128from32s(z32, src_elems, z32, z32));
+                  break;
+         case 1:  mask = 0xFF0F;
+                  assign(src_vec, mk128from32s(z32, z32, src_elems, z32));
+                  break;
+         case 0:  mask = 0xFFF0;
+                  assign(src_vec, mk128from32s(z32, z32, z32, src_elems));
+                  break;
+         default: vassert(0);
+      }
+
+      putXMMReg( gregOfRM(modrm), 
+                 binop( Iop_OrV128, mkexpr(src_vec),
+                        binop( Iop_AndV128, 
+                               getXMMReg( gregOfRM(modrm) ),
+                               mkV128(mask) ) ) );
+
+      goto decode_success;
+   }
+
+   /* 66 0F 38 38 /r  - PMINSB xmm1, xmm2/m128
+      66 0F 38 3C /r  - PMAXSB xmm1, xmm2/m128
+      Minimum/Maximum of Packed Signed Byte Integers (XMM)
+   */
+   if (sz == 2
+       && insn[0] == 0x0F && insn[1] == 0x38
+       && (insn[2] == 0x38 || insn[2] == 0x3C)) {
+     /* FIXME: this needs an alignment check */
+     Bool isMAX = insn[2] == 0x3C;
+     delta = dis_SSEint_E_to_G(
+         sorb, delta+3,
+         isMAX ? "pmaxsb" : "pminsb",
+         isMAX ? Iop_Max8Sx16 : Iop_Min8Sx16,
+         False
+         );
+     goto decode_success;
+   }
+
+   /* 66 0F 38 39 /r  - PMINSD xmm1, xmm2/m128
+      66 0F 38 3D /r  - PMAXSD xmm1, xmm2/m128
+      66 prefix (sz == 2): SSE2/SSE4 XMM instructions (128-bit)
+      0F 38 is the secondary escape used for SSSE3, SSE4, and later extensions
+      39 = PMINSD (minimum of packed signed 32-bit integers)
+      3D = PMAXSD (maximum of packed signed 32-bit integers)
+      reference: Intel Software Developer Manual (Volume 2: Instruction Set Reference)  */
+   if (sz == 2
+       && insn[0] == 0x0F && insn[1] == 0x38
+       && (insn[2] == 0x39 || insn[2] == 0x3D)) {
+     Bool isMAX = insn[2] == 0x3D;
+     delta = dis_SSEint_E_to_G(
+         sorb, delta+3,
+         isMAX ? "pmaxsd" : "pminsd",
+         isMAX ? Iop_Max32Sx4 : Iop_Min32Sx4,
+         False
+         );
+     goto decode_success;
+   }
+
+   /* 66 0F 38 3A /r  - PMINUW xmm1, xmm2/m128
+      66 0F 38 3E /r  - PMAXUW xmm1, xmm2/m128
+      Minimum/Maximum of Packed Unsigned Word Integers (XMM)
+   */
+   if (sz == 2
+       && insn[0] == 0x0F && insn[1] == 0x38
+       && (insn[2] == 0x3A || insn[2] == 0x3E)) {
+     /* FIXME: this needs an alignment check */
+     Bool isMAX = insn[2] == 0x3E;
+     delta = dis_SSEint_E_to_G(
+         sorb, delta+3,
+         isMAX ? "pmaxuw" : "pminuw",
+         isMAX ? Iop_Max16Ux8 : Iop_Min16Ux8,
+         False
+         );
+     goto decode_success;
+   }
+
+   /* 66 0F 38 3B /r  - PMINUD xmm1, xmm2/m128
+      66 0F 38 3F /r  - PMAXUD xmm1, xmm2/m128
+      Minimum/Maximum of Packed Unsigned Doubleword Integers (XMM)
+   */
+   if (sz == 2
+       && insn[0] == 0x0F && insn[1] == 0x38
+       && (insn[2] == 0x3B || insn[2] == 0x3F)) {
+     /* FIXME: this needs an alignment check */
+     Bool isMAX = insn[2] == 0x3F;
+     delta = dis_SSEint_E_to_G(
+         sorb, delta+3,
+         isMAX ? "pmaxud" : "pminud",
+         isMAX ? Iop_Max32Ux4 : Iop_Min32Ux4,
+         False
+         );
+     goto decode_success;
+   }
+
+   /* 66 0F 38 40 /r  - PMULLD xmm1, xmm2/m128
+      32x4 integer multiply from xmm2/m128 to xmm1 */
+   if (sz == 2
+       && insn[0] == 0x0F && insn[1] == 0x38 && insn[2] == 0x40) {
+
+      modrm = insn[3];
+
+      IRTemp argL = newTemp(Ity_V128);
+      IRTemp argR = newTemp(Ity_V128);
+
+      if (epartIsReg(modrm)) {
+         assign( argL, getXMMReg( eregOfRM(modrm) ) );
+         delta += 3+1;
+         DIP( "pmulld %s,%s\n",
+              nameXMMReg( eregOfRM(modrm) ),
+              nameXMMReg( gregOfRM(modrm) ) );
+      } else {
+         addr = disAMode( &alen, sorb, delta+3, dis_buf );
+         assign( argL, loadLE( Ity_V128, mkexpr(addr) ));
+         delta += 3+alen;
+         DIP( "pmulld %s,%s\n",
+              dis_buf, nameXMMReg( gregOfRM(modrm) ) );
+      }
+
+      assign(argR, getXMMReg( gregOfRM(modrm) ));
+
+      putXMMReg( gregOfRM(modrm),
+                 binop( Iop_Mul32x4, mkexpr(argL), mkexpr(argR)) );
+
+      goto decode_success;
+   }
+
    /* 66 0F 3A 0B /r ib = ROUNDSD imm8, xmm2/m64, xmm1
       (Partial implementation only -- only deal with cases where
       the rounding mode is specified directly by the immediate byte.)
@@ -12997,6 +13177,8 @@ DisResult disInstr_X86_WRK (
          DIP("lzcnt%c %s, %s\n", nameISize(sz), dis_buf,
              nameIReg(sz, gregOfRM(modrm)));
       }
+
+
 
       IRTemp res = gen_LZCNT(ty, src);
       putIReg(sz, gregOfRM(modrm), mkexpr(res));

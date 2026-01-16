@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -5075,14 +5075,14 @@ static IRTemp gen_LZCNT ( IRType ty, IRTemp src )
           binop(Iop_Shl64, mkexpr(src64),
                            mkU8(64 - 8 * sizeofIRType(ty))));
 
-   // Clz64 has undefined semantics when its input is zero, so
-   // special-case around that.
+   /* Guard against 0 input value. Use ClzNat64 operator for all other
+      values */
    IRTemp res64 = newTemp(Ity_I64);
    assign(res64,
           IRExpr_ITE(
              binop(Iop_CmpEQ64, mkexpr(src64x), mkU64(0)),
              mkU64(8 * sizeofIRType(ty)),
-             unop(Iop_Clz64, mkexpr(src64x))
+             unop(Iop_ClzNat64, mkexpr(src64x))
    ));
 
    IRTemp res = newTemp(ty);
@@ -5103,14 +5103,14 @@ static IRTemp gen_TZCNT ( IRType ty, IRTemp src )
    IRTemp src64 = newTemp(Ity_I64);
    assign(src64, widenUto64( mkexpr(src) ));
 
-   // Ctz64 has undefined semantics when its input is zero, so
-   // special-case around that.
+   /* Guard against 0 input value. Use CtzNat64 operator for all other
+      values */
    IRTemp res64 = newTemp(Ity_I64);
    assign(res64,
           IRExpr_ITE(
              binop(Iop_CmpEQ64, mkexpr(src64), mkU64(0)),
              mkU64(8 * sizeofIRType(ty)),
-             unop(Iop_Ctz64, mkexpr(src64))
+             unop(Iop_CtzNat64, mkexpr(src64))
    ));
 
    IRTemp res = newTemp(ty);
@@ -8421,30 +8421,28 @@ ULong dis_bs_E_G ( const VexAbiInfo* vbi,
       elimination of previous stores to this field work better. */
    stmt( IRStmt_Put( OFFB_CC_NDEP, mkU64(0) ));
 
-   /* Result: iff source value is zero, we can't use
-      Iop_Clz64/Iop_Ctz64 as they have no defined result in that case.
-      But anyway, amd64 semantics say the result is undefined in
-      such situations.  Hence handle the zero case specially. */
+   /* amd64 semantics say the result is undefined iff source value is
+      zero. Hence handle the zero case specially. */
 
    /* Bleh.  What we compute:
 
           bsf64:  if src == 0 then {dst is unchanged} 
-                              else Ctz64(src)
+                              else CtzNat64(src)
 
           bsr64:  if src == 0 then {dst is unchanged} 
-                              else 63 - Clz64(src)
+                              else 63 - ClzNat64(src)
 
           bsf32:  if src == 0 then {dst is unchanged} 
-                              else Ctz64(32Uto64(src))
+                              else CtzNat64(32Uto64(src))
 
           bsr32:  if src == 0 then {dst is unchanged}
-                              else 63 - Clz64(32Uto64(src))
+                              else 63 - ClzNat64(32Uto64(src))
 
           bsf16:  if src == 0 then {dst is unchanged} 
-                              else Ctz64(32Uto64(16Uto32(src)))
+                              else CtzNat64(32Uto64(16Uto32(src)))
 
           bsr16:  if src == 0 then {dst is unchanged} 
-                              else 63 - Clz64(32Uto64(16Uto32(src)))
+                              else 63 - ClzNat64(32Uto64(16Uto32(src)))
    */
 
    /* The main computation, guarding against zero. */
@@ -8452,10 +8450,10 @@ ULong dis_bs_E_G ( const VexAbiInfo* vbi,
            IRExpr_ITE( 
               mkexpr(srcB),
               /* src != 0 */
-              fwds ? unop(Iop_Ctz64, mkexpr(src64))
+              fwds ? unop(Iop_CtzNat64, mkexpr(src64))
                    : binop(Iop_Sub64, 
                            mkU64(63), 
-                           unop(Iop_Clz64, mkexpr(src64))),
+                           unop(Iop_ClzNat64, mkexpr(src64))),
               /* src == 0 -- leave dst unchanged */
               widenUto64( getIRegG( sz, pfx, modrm ) )
            )
@@ -14138,7 +14136,7 @@ Long dis_ESC_0F__SSE2 ( Bool* decode_OK,
          goto decode_success;
       }
       /* 66 0F 73 /6 ib = PSLLQ by immediate */
-      if (have66noF2noF3(pfx) && sz == 2 
+      if (have66noF2noF3(pfx) && (sz == 2 || /* ignore redundant REX.W */ sz == 8)
           && epartIsReg(getUChar(delta))
           && gregLO3ofRM(getUChar(delta)) == 6) {
          delta = dis_SSE_shiftE_imm( pfx, delta, "psllq", Iop_ShlN64x2 );
@@ -16826,13 +16824,18 @@ static Long dis_VBLENDV_256 ( const VexAbiInfo* vbi, Prefix pfx, Long delta,
 
 static void finish_xTESTy ( IRTemp andV, IRTemp andnV, Int sign )
 {
-   /* Set Z=1 iff (vecE & vecG) == 0
-      Set C=1 iff (vecE & not vecG) == 0
+   /* Set Z=1 iff (vecE & vecG) == 0--(128)--0
+      Set C=1 iff (vecE & not vecG) == 0--(128)--0
+
+      For the case `sign == 0`, be careful to use only IROps that can be
+      instrumented exactly by memcheck.  This is because PTEST is used for
+      __builtin_strcmp in gcc14.  See
+      https://bugzilla.redhat.com/show_bug.cgi?id=2257546
    */
 
    /* andV, andnV:  vecE & vecG,  vecE and not(vecG) */
 
-   /* andV resp. andnV, reduced to 64-bit values, by or-ing the top
+   /* andV resp. andnV, are reduced to 64-bit values by or-ing the top
       and bottom 64-bits together.  It relies on this trick:
 
       InterleaveLO64x2([a,b],[c,d]) == [b,d]    hence
@@ -16862,11 +16865,13 @@ static void finish_xTESTy ( IRTemp andV, IRTemp andnV, Int sign )
                      binop(Iop_InterleaveHI64x2,
                            mkexpr(andnV), mkexpr(andnV)))));
 
+   // Make z64 and c64 be either all-0s or all-1s
    IRTemp z64 = newTemp(Ity_I64);
    IRTemp c64 = newTemp(Ity_I64);
+
    if (sign == 64) {
-      /* When only interested in the most significant bit, just shift
-         arithmetically right and negate.  */
+      /* When only interested in the most significant bit, just copy bit 63
+         into all bit positions, then invert. */
       assign(z64,
              unop(Iop_Not64,
                   binop(Iop_Sar64, mkexpr(and64), mkU8(63))));
@@ -16874,37 +16879,28 @@ static void finish_xTESTy ( IRTemp andV, IRTemp andnV, Int sign )
       assign(c64,
              unop(Iop_Not64,
                   binop(Iop_Sar64, mkexpr(andn64), mkU8(63))));
-   } else {
-      if (sign == 32) {
-         /* When interested in bit 31 and bit 63, mask those bits and
-            fallthrough into the PTEST handling.  */
-         IRTemp t0 = newTemp(Ity_I64);
-         IRTemp t1 = newTemp(Ity_I64);
-         IRTemp t2 = newTemp(Ity_I64);
-         assign(t0, mkU64(0x8000000080000000ULL));
-         assign(t1, binop(Iop_And64, mkexpr(and64), mkexpr(t0)));
-         assign(t2, binop(Iop_And64, mkexpr(andn64), mkexpr(t0)));
-         and64 = t1;
-         andn64 = t2;
-      }
-      /* Now convert and64, andn64 to all-zeroes or all-1s, so we can
-         slice out the Z and C bits conveniently.  We use the standard
-         trick all-zeroes -> all-zeroes, anything-else -> all-ones
-         done by "(x | -x) >>s (word-size - 1)".
-      */
+   } else if (sign == 32) {
+      /* If we're interested into bits 63 and 31, OR bit 31 into bit 63, copy
+         bit 63 into all bit positions, then invert. */
+      IRTemp and3264 = newTemp(Ity_I64);
+      assign(and3264, binop(Iop_Or64, mkexpr(and64),
+                            binop(Iop_Shl64, mkexpr(and64), mkU8(32))));
       assign(z64,
              unop(Iop_Not64,
-                  binop(Iop_Sar64,
-                        binop(Iop_Or64,
-                              binop(Iop_Sub64, mkU64(0), mkexpr(and64)),
-                                    mkexpr(and64)), mkU8(63))));
+                  binop(Iop_Sar64, mkexpr(and3264), mkU8(63))));
 
+      IRTemp andn3264 = newTemp(Ity_I64);
+      assign(andn3264, binop(Iop_Or64, mkexpr(andn64),
+                             binop(Iop_Shl64, mkexpr(andn64), mkU8(32))));
       assign(c64,
              unop(Iop_Not64,
-                  binop(Iop_Sar64,
-                        binop(Iop_Or64,
-                              binop(Iop_Sub64, mkU64(0), mkexpr(andn64)),
-                                    mkexpr(andn64)), mkU8(63))));
+                  binop(Iop_Sar64, mkexpr(andn3264), mkU8(63))));
+   } else {
+      vassert(sign == 0);
+      assign(z64, IRExpr_ITE(binop(Iop_CmpEQ64, mkexpr(and64), mkU64(0)),
+                             mkU64(~0ULL), mkU64(0ULL)));
+      assign(c64, IRExpr_ITE(binop(Iop_CmpEQ64, mkexpr(andn64), mkU64(0)),
+                             mkU64(~0ULL), mkU64(0ULL)));
    }
 
    /* And finally, slice out the Z and C flags and set the flags
@@ -16966,9 +16962,7 @@ static Long dis_xTESTy_128 ( const VexAbiInfo* vbi, Prefix pfx,
    IRTemp andnV = newTemp(Ity_V128);
    assign(andV,  binop(Iop_AndV128, mkexpr(vecE), mkexpr(vecG)));
    assign(andnV, binop(Iop_AndV128,
-                       mkexpr(vecE),
-                       binop(Iop_XorV128, mkexpr(vecG),
-                                          mkV128(0xFFFF))));
+                       mkexpr(vecE), unop(Iop_NotV128, mkexpr(vecG))));
 
    finish_xTESTy ( andV, andnV, sign );
    return delta;
@@ -18610,8 +18604,9 @@ static Long dis_PEXTRQ ( const VexAbiInfo* vbi, Prefix pfx,
 
 static IRExpr* math_CTZ32(IRExpr *exp)
 {
-   /* Iop_Ctz32 isn't implemented by the amd64 back end, so use Iop_Ctz64. */
-   return unop(Iop_64to32, unop(Iop_Ctz64, unop(Iop_32Uto64, exp)));
+   /* Iop_CtzNat32 isn't implemented by the amd64 back end, so use
+      Iop_CtzNat64. */
+   return unop(Iop_64to32, unop(Iop_CtzNat64, unop(Iop_32Uto64, exp)));
 }
 
 static Long dis_PCMPISTRI_3A ( UChar modrm, UInt regNoL, UInt regNoR,
@@ -27019,7 +27014,6 @@ Long dis_ESC_0F__VEX (
       break;
 
    case 0xD6:
-      /* I can't even find any Intel docs for this one. */
       /* Basically: 66 0F D6 = MOVQ -- move 64 bits from G (lo half
          xmm) to E (mem or lo half xmm).  Looks like L==0(128), W==0
          (WIG, maybe?) */
@@ -27028,8 +27022,15 @@ Long dis_ESC_0F__VEX (
          UChar modrm = getUChar(delta);
          UInt  rG    = gregOfRexRM(pfx,modrm);
          if (epartIsReg(modrm)) {
-            /* fall through, awaiting test case */
             /* dst: lo half copied, hi half zeroed */
+            UInt rE = eregOfRexRM(pfx,modrm);
+            putXMMRegLane64( rE, 0, getXMMRegLane64( rG, 0 ));
+            /* zero bits 255:64 */
+            putXMMRegLane64( rE, 1, mkU64(0) );
+            putYMMRegLane128( rE, 1, mkV128(0) );
+            DIP("vmovq %s,%s\n", nameXMMReg(rG), nameXMMReg(rE));
+            delta += 1;
+            goto decode_success;
          } else {
             addr = disAMode ( &alen, vbi, pfx, delta, dis_buf, 0 );
             storeLE( mkexpr(addr), getXMMRegLane64( rG, 0 ));
@@ -27993,8 +27994,8 @@ static Long dis_FMA ( const VexAbiInfo* vbi, Prefix pfx, Long delta, UChar opc )
    }
 
    switch (vty) {
-      case Ity_F32:  putYMMRegLane32(rG, 1, mkU32(0)); /*fallthru*/
-      case Ity_F64:  putYMMRegLane64(rG, 1, mkU64(0)); /*fallthru*/
+      case Ity_F32:
+      case Ity_F64:
       case Ity_V128: putYMMRegLane128(rG, 1, mkV128(0)); /*fallthru*/
       case Ity_V256: break;
       default: vassert(0);
@@ -32176,7 +32177,7 @@ Long dis_ESC_0F3A__VEX (
                                    nameIRegG(size,pfx,rm));
             delta += 2;
          } else {
-            addr = disAMode ( &alen, vbi, pfx, delta, dis_buf, 0 );
+            addr = disAMode ( &alen, vbi, pfx, delta, dis_buf, 1 );
             imm8 = getUChar(delta+alen);
             assign( src, loadLE(ty, mkexpr(addr)) );
             DIP("rorx %d,%s,%s\n", imm8, dis_buf, nameIRegG(size,pfx,rm));
@@ -32693,10 +32694,32 @@ DisResult disInstr_AMD64 ( IRSB*        irsb_IN,
    if (guest_RIP_next_mustcheck 
        && guest_RIP_next_assumed != guest_RIP_curr_instr + dres.len) {
       vex_printf("\n");
+      vex_printf("     current %%rip = 0x%llx\n",
+                 guest_RIP_curr_instr );
       vex_printf("assumed next %%rip = 0x%llx\n", 
                  guest_RIP_next_assumed );
       vex_printf(" actual next %%rip = 0x%llx\n", 
                  guest_RIP_curr_instr + dres.len );
+      vex_printf("instruction bytes: "
+                 "0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x\n",
+                 getUChar(delta+0),
+                 getUChar(delta+1),
+                 getUChar(delta+2),
+                 getUChar(delta+3),
+                 getUChar(delta+4),
+                 getUChar(delta+5),
+                 getUChar(delta+6),
+                 getUChar(delta+7),
+                 getUChar(delta+8),
+                 getUChar(delta+9) );
+
+      /* re-disassemble the instruction so as
+         to generate a useful error message; then assert. */
+      vex_traceflags |= VEX_TRACE_FE;
+      guest_RIP_next_assumed   = 0;
+      guest_RIP_next_mustcheck = False;
+      dres = disInstr_AMD64_WRK ( &expect_CAS,
+                                 delta, archinfo, abiinfo, sigill_diag_IN );
       vpanic("disInstr_AMD64: disInstr miscalculated next %rip");
    }
 

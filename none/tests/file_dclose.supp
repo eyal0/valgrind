@@ -1,0 +1,14 @@
+{
+   badclose
+   CoreError:FdBadClose
+   fun:*close*
+   fun:closefile
+}
+{
+   badclose_2
+   CoreError:FdBadClose
+   fun:_close
+   fun:close
+   fun:closefile
+}
+

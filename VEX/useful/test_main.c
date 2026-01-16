@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -101,7 +101,8 @@ int main ( int argc, char** argv )
    VexTranslateResult tres;
    VexControl vcon;
    VexGuestExtents vge;
-   VexArchInfo vai_x86, vai_amd64, vai_ppc32, vai_arm, vai_mips32, vai_mips64;
+   VexArchInfo vai_x86, vai_amd64, vai_ppc32, vai_arm, vai_mips32, vai_mips64,
+      vai_riscv64;
    VexAbiInfo vbi;
    VexTranslateArgs vta;
 
@@ -190,6 +191,10 @@ int main ( int argc, char** argv )
       LibVEX_default_VexArchInfo(&vai_mips64);
       vai_mips64.endness = VexEndnessLE;
 
+      LibVEX_default_VexArchInfo(&vai_riscv64);
+      vai_riscv64.hwcaps = 0;
+      vai_riscv64.endness = VexEndnessLE;
+
       LibVEX_default_VexAbiInfo(&vbi);
       vbi.guest_stack_redzone_size = 128;
 
@@ -244,6 +249,12 @@ int main ( int argc, char** argv )
          analyser in the front end happy.  */
       vta.guest_bytes     = &origbuf[18 +1];
       vta.guest_bytes_addr = (Addr) &origbuf[18 +1];
+#endif
+#if 0 /* riscv64 -> riscv64 */
+      vta.arch_guest     = VexArchRISCV64;
+      vta.archinfo_guest = vai_riscv64;
+      vta.arch_host      = VexArchRISCV64;
+      vta.archinfo_host  = vai_riscv64;
 #endif
 
 #if 1 /* no instrumentation */
@@ -519,7 +530,7 @@ static void MC_helperc_value_check4_fail( void ) { }
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -2010,10 +2021,6 @@ IRExpr* expr2vbits_Unop ( MCEnv* mce, IROp op, IRAtom* atom )
       case Iop_AbsF64:
       case Iop_2xm1F64:
          return mkPCastTo(mce, Ity_I64, vatom);
-
-      case Iop_Clz32:
-      case Iop_Ctz32:
-         return mkPCastTo(mce, Ity_I32, vatom);
 
       case Iop_32Sto64:
       case Iop_32Uto64:

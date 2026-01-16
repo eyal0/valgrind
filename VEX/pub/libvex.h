@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -60,6 +60,7 @@ typedef
       VexArchMIPS32,
       VexArchMIPS64,
       VexArchNANOMIPS,
+      VexArchRISCV64,
    }
    VexArch;
 
@@ -101,6 +102,8 @@ typedef
 #define VEX_HWCAPS_AMD64_RDRAND (1<<13) /* RDRAND instructions */
 #define VEX_HWCAPS_AMD64_F16C   (1<<14) /* F16C instructions */
 #define VEX_HWCAPS_AMD64_RDSEED (1<<15) /* RDSEED instructions */
+#define VEX_HWCAPS_AMD64_FMA3   (1<<16) /* FMA3 instructions */
+#define VEX_HWCAPS_AMD64_FMA4   (1<<17) /* FMA4 instructions */
 
 /* ppc32: baseline capability is integer only */
 #define VEX_HWCAPS_PPC32_F     (1<<8)  /* basic (non-optional) FP */
@@ -131,7 +134,7 @@ typedef
 /* s390x: Hardware capability encoding
 
    Bits [26:31] encode the machine model (see VEX_S390X_MODEL... below)
-   Bits [0:20]  encode specific hardware capabilities
+   Bits [0:25]  encode specific hardware capabilities
                 (see VEX_HWAPS_S390X_... below)
 */
 
@@ -155,45 +158,34 @@ typedef
 #define VEX_S390X_MODEL_Z14_ZR1  15
 #define VEX_S390X_MODEL_Z15      16
 #define VEX_S390X_MODEL_Z16      17
-#define VEX_S390X_MODEL_UNKNOWN  18     /* always last in list */
+#define VEX_S390X_MODEL_Z17      18
+#define VEX_S390X_MODEL_UNKNOWN  19     /* always last in list */
 #define VEX_S390X_MODEL_MASK     0x3F
 
-#define VEX_HWCAPS_S390X_LDISP (1<<6)   /* Long-displacement facility */
-#define VEX_HWCAPS_S390X_EIMM  (1<<7)   /* Extended-immediate facility */
-#define VEX_HWCAPS_S390X_GIE   (1<<8)   /* General-instruction-extension facility */
-#define VEX_HWCAPS_S390X_DFP   (1<<9)   /* Decimal floating point facility */
-#define VEX_HWCAPS_S390X_FGX   (1<<10)  /* FPR-GR transfer facility */
-#define VEX_HWCAPS_S390X_ETF2  (1<<11)  /* ETF2-enhancement facility */
-#define VEX_HWCAPS_S390X_STFLE (1<<12)  /* STFLE facility */
-#define VEX_HWCAPS_S390X_ETF3  (1<<13)  /* ETF3-enhancement facility */
-#define VEX_HWCAPS_S390X_STCKF (1<<14)  /* STCKF facility */
-#define VEX_HWCAPS_S390X_FPEXT (1<<15)  /* Floating point extension facility */
-#define VEX_HWCAPS_S390X_LSC   (1<<16)  /* Conditional load/store facility */
-#define VEX_HWCAPS_S390X_PFPO  (1<<17)  /* Perform floating point ops facility */
-#define VEX_HWCAPS_S390X_VX    (1<<18)  /* Vector facility */
-#define VEX_HWCAPS_S390X_MSA5  (1<<19)  /* message security assistance facility */
-#define VEX_HWCAPS_S390X_MI2   (1<<20)  /* miscellaneous-instruction-extensions facility 2 */
-#define VEX_HWCAPS_S390X_LSC2  (1<<21)  /* Conditional load/store facility2 */
-#define VEX_HWCAPS_S390X_VXE   (1<<22)  /* Vector-enhancements facility */
+#define VEX_HWCAPS_S390X_VX    (1 << 6)  /* Vector facility */
+#define VEX_HWCAPS_S390X_MSA5  (1 << 7)  /* Message-security-assistance facility 5 */
+#define VEX_HWCAPS_S390X_MI2   (1 << 8)  /* Miscellaneous-instruction-extensions facility 2 */
+#define VEX_HWCAPS_S390X_LSC2  (1 << 9)  /* Conditional load/store facility2 */
+#define VEX_HWCAPS_S390X_VXE   (1 << 10) /* Vector-enhancements facility */
+#define VEX_HWCAPS_S390X_NNPA  (1 << 11) /* NNPA facility */
+#define VEX_HWCAPS_S390X_DFLT  (1 << 12) /* Deflate-conversion facility */
+#define VEX_HWCAPS_S390X_VXE2  (1 << 13) /* Vector-enhancements facility 2 */
+#define VEX_HWCAPS_S390X_VXD   (1 << 14) /* Vector packed-decimal facility */
+#define VEX_HWCAPS_S390X_MSA8  (1 << 15) /* Message-security-assist extension 8 */
+#define VEX_HWCAPS_S390X_MSA9  (1 << 16) /* Message-security-assist extension 9 */
 
 /* Special value representing all available s390x hwcaps */
-#define VEX_HWCAPS_S390X_ALL   (VEX_HWCAPS_S390X_LDISP | \
-                                VEX_HWCAPS_S390X_EIMM  | \
-                                VEX_HWCAPS_S390X_GIE   | \
-                                VEX_HWCAPS_S390X_DFP   | \
-                                VEX_HWCAPS_S390X_FGX   | \
-                                VEX_HWCAPS_S390X_STFLE | \
-                                VEX_HWCAPS_S390X_STCKF | \
-                                VEX_HWCAPS_S390X_FPEXT | \
-                                VEX_HWCAPS_S390X_LSC   | \
-                                VEX_HWCAPS_S390X_ETF3  | \
-                                VEX_HWCAPS_S390X_ETF2  | \
-                                VEX_HWCAPS_S390X_PFPO  | \
-                                VEX_HWCAPS_S390X_VX    | \
+#define VEX_HWCAPS_S390X_ALL   (VEX_HWCAPS_S390X_VX    | \
                                 VEX_HWCAPS_S390X_MSA5  | \
                                 VEX_HWCAPS_S390X_MI2   | \
                                 VEX_HWCAPS_S390X_LSC2  | \
-                                VEX_HWCAPS_S390X_VXE)
+                                VEX_HWCAPS_S390X_VXE   | \
+                                VEX_HWCAPS_S390X_NNPA  | \
+                                VEX_HWCAPS_S390X_DFLT  | \
+                                VEX_HWCAPS_S390X_VXE2  | \
+                                VEX_HWCAPS_S390X_VXD   | \
+                                VEX_HWCAPS_S390X_MSA8  | \
+                                VEX_HWCAPS_S390X_MSA9)
 
 #define VEX_HWCAPS_S390X(x)  ((x) & ~VEX_S390X_MODEL_MASK)
 #define VEX_S390X_MODEL(x)   ((x) &  VEX_S390X_MODEL_MASK)
@@ -371,6 +363,7 @@ typedef
          line size of 64 bytes would be encoded here as 6. */
       UInt arm64_dMinLine_lg2_szB;
       UInt arm64_iMinLine_lg2_szB;
+      UChar arm64_cache_block_size;
       /* ARM64: does the host require us to use the fallback LLSC
          implementation? */
       Bool arm64_requires_fallback_LLSC;
@@ -552,6 +545,9 @@ typedef
          - '3': current, faster implementation; perhaps producing slightly worse
                 spilling decisions. */
       UInt regalloc_version;
+      /* When false constant folding and algebric simplification is disabled.
+         This is used in the iropt tester. */
+      Bool iropt_fold_expr;
    }
    VexControl;
 
@@ -561,6 +557,8 @@ typedef
 extern 
 void LibVEX_default_VexControl ( /*OUT*/ VexControl* vcon );
 
+extern
+void LibVEX_set_VexControl ( VexControl );
 
 /*-------------------------------------------------------*/
 /*--- Storage management control                      ---*/
@@ -940,7 +938,14 @@ extern void LibVEX_ShowStats ( void );
 
 #define NO_ROUNDING_MODE (~0u)
 
-typedef 
+typedef
+   enum {
+      IRICB_vbit,
+      IRICB_iropt,
+   }
+   IRICB_t;
+
+typedef
    struct {
       IROp  op;        // the operation to perform
       HWord result;    // address of the result
@@ -956,13 +961,37 @@ typedef
       UInt  rounding_mode;
       UInt  num_operands; // excluding rounding mode, if any
       /* The following two members describe if this operand has immediate
-       *  operands. There are a few restrictions:
-       *    (1) An operator can have at most one immediate operand.
+       * operands. There are a few restrictions:
+       * (1) An operator can have at most one immediate operand.
        * (2) If there is an immediate operand, it is the right-most operand
-       *  An immediate_index of 0 means there is no immediate operand.
+       * An immediate_index of 0 means there is no immediate operand.
        */
       UInt immediate_type;  // size of immediate Ity_I8, Ity_16
       UInt immediate_index; // operand number: 1, 2
+   }
+   IRICB_vbit_payload;
+
+typedef
+   struct {
+      IROp   op;            // the operation to perform
+      HWord  result_fold;   // address of the result (with folding)
+      HWord  result_nofold; // address of the result (without folding)
+      HWord  opnd1;         // address of 1st operand
+      HWord  opnd2;         // address of 2nd operand
+      IRType t_result;      // type of result
+      IRType t_opnd1;       // type of 1st operand
+      IRType t_opnd2;       // type of 2nd operand
+      UInt   num_operands;
+   }
+   IRICB_iropt_payload;
+
+typedef
+   struct {
+      IRICB_t kind;
+      union {
+         IRICB_vbit_payload vbit;
+         IRICB_iropt_payload iropt;
+      };
    }
    IRICB;
 
@@ -1025,6 +1054,16 @@ extern void LibVEX_InitIRI ( const IRICB * );
    arm64
    ~~~~~
    r21 is GSP.
+
+   riscv64
+   ~~~~~~~
+   On entry, x8/s0 should point to the guest state + 2048. RISC-V has
+   load/store instructions with immediate (offset from the base
+   register) in range -2048 to 2047. The adjustment of 2048 allows
+   LibVEX to effectively use the full range. When translating
+   riscv64->riscv64, only a single instruction is then needed to
+   read/write values in the guest state (primary + 2x shadow state
+   areas) and most of the spill area.
 
    ALL GUEST ARCHITECTURES
    ~~~~~~~~~~~~~~~~~~~~~~~

@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -434,6 +434,18 @@ typedef
       Iop_Or8,   Iop_Or16,   Iop_Or32,   Iop_Or64,
       Iop_And8,  Iop_And16,  Iop_And32,  Iop_And64,
       Iop_Xor8,  Iop_Xor16,  Iop_Xor32,  Iop_Xor64,
+      /* Bitwise shift ops
+         Semantics as per C standard:
+         If the value of the right operand is negative or is greater
+         than or equal to the width of the left operand, the behaviour is
+         undefined.
+         For Shl: The result of E1 << E2 is E1 left-shifted E2 bit positions.
+         Vacated bits are filled with zeroes.
+         For Shr: The result of E1 >> E2 is E1 right-shifted E2 bit positions.
+         Vacated bits are filled with zeroes.
+         For Sar: The result of E1 >> E2 is E1 right-shifted E2 bit positions.
+         Vacated bits are filled with the most significant bit of E1 prior
+         to shifting. */
       Iop_Shl8,  Iop_Shl16,  Iop_Shl32,  Iop_Shl64,
       Iop_Shr8,  Iop_Shr16,  Iop_Shr32,  Iop_Shr64,
       Iop_Sar8,  Iop_Sar16,  Iop_Sar32,  Iop_Sar64,
@@ -462,13 +474,6 @@ typedef
       Iop_MullU8, Iop_MullU16, Iop_MullU32, Iop_MullU64,
 
       /* Counting bits */
-      /* Ctz64/Ctz32/Clz64/Clz32 are UNDEFINED when given arguments of zero.
-         You must ensure they are never given a zero argument.  As of
-         2018-Nov-14 they are deprecated.  Try to use the Nat variants
-         immediately below, if you can.
-      */
-      Iop_Clz64, Iop_Clz32,   /* count leading zeroes */
-      Iop_Ctz64, Iop_Ctz32,   /* count trailing zeros */
       /* Count leading/trailing zeroes, with "natural" semantics for the
          case where the input is zero: then the result is the number of bits
          in the word. */
@@ -499,7 +504,13 @@ typedef
       Iop_CmpORD32S, Iop_CmpORD64S,
 
       /* Division */
-      /* TODO: clarify semantics wrt rounding, negative values, whatever */
+      /* Semantics of division as per C standard:
+         If the value of the divisor is zero, the behaviour is undefined.
+         When integers are divided, the result of division is the algebraic
+         quotient with any fractional part discarded. In other words:
+         truncation towards zero. If the quotient a/b is representable,
+         the expression (a/b)*b + a%b shall equal a; otherwise, the behaviour
+         of division and modulo operation is undefined. */
       Iop_DivU32,   // :: I32,I32 -> I32 (simple div, no mod)
       Iop_DivS32,   // ditto, signed
       Iop_DivU64,   // :: I64,I64 -> I64 (simple div, no mod)
@@ -521,7 +532,7 @@ typedef
                          // of which lo half is div and hi half is mod
       Iop_DivModS64to32, // ditto, signed
 
-      Iop_DivModU128to64, // :: V128,I64 -> V128
+      Iop_DivModU128to64, // :: I128,I64 -> I128
                           // of which lo half is div and hi half is mod
       Iop_DivModS128to64, // ditto, signed
 
@@ -782,8 +793,13 @@ typedef
                              as F128) */
       Iop_RoundF64toInt, /* F64 value to nearest integral value (still
                             as F64) */
+      Iop_RoundF64toIntA0, /* As Iop_RoundF64toInt but ties to above zero*/
+
+      Iop_RoundF64toIntE, /* As Iop_RoundF64toInt but ties to even */
       Iop_RoundF32toInt, /* F32 value to nearest integral value (still
                             as F32) */
+      Iop_RoundF32toIntA0, /* As Iop_RoundF32toInt but ties to above zero*/
+      Iop_RoundF32toIntE, /* As Iop_RoundF32toInt but ties to even */
 
       /* --- guest s390 specifics, not mandated by 754. --- */
 
@@ -2084,7 +2100,8 @@ typedef
       Irrm_PREPARE_SHORTER      = 5,  // Round to prepare for shorter 
                                       // precision
       Irrm_AWAY_FROM_ZERO       = 6,  // Round to away from 0
-      Irrm_NEAREST_TIE_TOWARD_0 = 7   // Round to nearest, ties towards 0
+      Irrm_NEAREST_TIE_TOWARD_0 = 7,  // Round to nearest, ties towards 0
+      Irrm_INVALID              = 8   // Invalid mode
    }
    IRRoundingMode;
 
@@ -2193,7 +2210,7 @@ struct _IRExpr {
 
          It is important to get the array size/type exactly correct
          since IR optimisation looks closely at such info in order to
-         establish aliasing/non-aliasing between seperate GetI and
+         establish aliasing/non-aliasing between separate GetI and
          PutI events, which is used to establish when they can be
          reordered, etc.  Putting incorrect info in will lead to
          obscure IR optimisation bugs.
@@ -2399,6 +2416,9 @@ extern IRExpr* deepCopyIRExpr ( const IRExpr* );
 /* Pretty-print an IRExpr. */
 extern void ppIRExpr ( const IRExpr* );
 
+/* Fold an IRExpr. Return folded result. */
+extern IRExpr* foldIRExpr ( IRExpr**, IRExpr* );
+
 /* NULL-terminated IRExpr vector constructors, suitable for
    use as arg lists in clean/dirty helper calls. */
 extern IRExpr** mkIRExprVec_0 ( void );
@@ -2480,6 +2500,11 @@ extern Bool eqIRAtom ( const IRExpr*, const IRExpr* );
    executed kernel-entering (system call) instruction.  This makes it
    very much easier (viz, actually possible at all) to back up the
    guest to restart a syscall that has been interrupted by a signal.
+
+   Re Ijk_Extension: the guest state must have the pseudo-register
+   guest_IP_AT_SYSCALL, which is also used for Ijk_Sys_*.  Front ends
+   must set this to the current instruction address before jumping to
+   an extension handler.
 */
 typedef
    enum {
@@ -2512,8 +2537,9 @@ typedef
       Ijk_Sys_int130,     /* amd64/x86 'int $0x82' */
       Ijk_Sys_int145,     /* amd64/x86 'int $0x91' */
       Ijk_Sys_int210,     /* amd64/x86 'int $0xD2' */
-      Ijk_Sys_sysenter    /* x86 'sysenter'.  guest_EIP becomes 
+      Ijk_Sys_sysenter,   /* x86 'sysenter'.  guest_EIP becomes
                              invalid at the point this happens. */
+      Ijk_Extension,      /* invoke guest-specific extension */
    }
    IRJumpKind;
 

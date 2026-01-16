@@ -9,7 +9,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -108,14 +108,10 @@ static irop_t irops[] = {
   { DEFOP(Iop_MullU16,    UNDEF_LEFT), .s390x = 1, .amd64 = 1, .x86 = 1, .arm = 0, .ppc64 = 0, .ppc32 = 0, .mips32 =0, .mips64 = 0 },
   { DEFOP(Iop_MullU32,    UNDEF_LEFT), .s390x = 1, .amd64 = 1, .x86 = 1, .arm = 1, .ppc64 = 1, .ppc32 = 1, .mips32 =0, .mips64 = 1 }, // mips asserts
   { DEFOP(Iop_MullU64,    UNDEF_LEFT), .s390x = 1, .amd64 = 1, .x86 = 0, .arm = 0, .ppc64 = 1, .ppc32 = 0, .mips32 =0, .mips64 = 1 }, // ppc32, mips assert
-  { DEFOP(Iop_Clz64,      UNDEF_ALL),  .s390x = 0, .amd64 = 1, .x86 = 0, .arm = 0, .ppc64 = 1, .ppc32 = 0, .mips32 =0, .mips64 = 1 }, // ppc32 asserts
-  { DEFOP(Iop_Clz32,      UNDEF_ALL),  .s390x = 0, .amd64 = 0, .x86 = 1, .arm = 1, .ppc64 = 1, .ppc32 = 1, .mips32 =1, .mips64 = 1 },
-  { DEFOP(Iop_Ctz64,      UNDEF_ALL),  .s390x = 0, .amd64 = 1, .x86 = 0, .arm = 0, .ppc64 = 0, .ppc32 = 0, .mips32 =0, .mips64 = 0 },
-  { DEFOP(Iop_Ctz32,      UNDEF_ALL),  .s390x = 0, .amd64 = 0, .x86 = 1, .arm = 0, .ppc64 = 0, .ppc32 = 0, .mips32 =0, .mips64 = 0 },
-  { DEFOP(Iop_ClzNat64,   UNDEF_ALL),  .s390x = 1, .amd64 = 0, .x86 = 0, .arm = 0, .ppc64 = 1, .ppc32 = 0, .mips32 =0, .mips64 = 0 }, // ppc32 asserts
-  { DEFOP(Iop_ClzNat32,   UNDEF_ALL),  .s390x = 0, .amd64 = 0, .x86 = 0, .arm = 0, .ppc64 = 1, .ppc32 = 1, .mips32 =0, .mips64 = 0 },
-  { DEFOP(Iop_CtzNat64,   UNDEF_ALL),  .s390x = 0, .amd64 = 0, .x86 = 0, .arm = 0, .ppc64 = 1, .ppc32 = 0, .mips32 =0, .mips64 = 0 },
-  { DEFOP(Iop_CtzNat32,   UNDEF_ALL),  .s390x = 0, .amd64 = 0, .x86 = 0, .arm = 0, .ppc64 = 0, .ppc32 = 1, .mips32 =0, .mips64 = 0 },
+  { DEFOP(Iop_ClzNat64,   UNDEF_ALL),  .s390x = 1, .amd64 = 1, .x86 = 0, .arm = 0, .ppc64 = 1, .ppc32 = 0, .mips32 =0, .mips64 = 1 }, // ppc32 asserts
+  { DEFOP(Iop_ClzNat32,   UNDEF_ALL),  .s390x = 0, .amd64 = 0, .x86 = 1, .arm = 1, .ppc64 = 1, .ppc32 = 1, .mips32 =1, .mips64 = 1 },
+  { DEFOP(Iop_CtzNat64,   UNDEF_ALL),  .s390x = 0, .amd64 = 1, .x86 = 0, .arm = 0, .ppc64 = 1, .ppc32 = 0, .mips32 =0, .mips64 = 0 },
+  { DEFOP(Iop_CtzNat32,   UNDEF_ALL),  .s390x = 0, .amd64 = 0, .x86 = 1, .arm = 0, .ppc64 = 0, .ppc32 = 1, .mips32 =0, .mips64 = 0 },
   { DEFOP(Iop_PopCount64, UNDEF_ALL),  .s390x = 0, .amd64 = 0, .x86 = 0, .arm = 0, .ppc64 = 1, .ppc32 = 0, .mips32 =0, .mips64 = 0 },
   { DEFOP(Iop_PopCount32, UNDEF_ALL),  .s390x = 0, .amd64 = 0, .x86 = 0, .arm = 0, .ppc64 = 1, .ppc32 = 1, .mips32 =0, .mips64 = 0 },
   { DEFOP(Iop_CmpLT32S,   UNDEF_ALL),  .s390x = 1, .amd64 = 1, .x86 = 1, .arm = 1, .ppc64 = 1, .ppc32 = 1, .mips32 =1, .mips64 = 1 },
@@ -293,7 +289,11 @@ static irop_t irops[] = {
   { DEFOP(Iop_2xm1F64,       UNDEF_ALL), .s390x = 0, .amd64 = 1, .x86 = 1, .arm = 0, .ppc64 = 0, .ppc32 = 0, .mips32 = 0, .mips64 = 0 },
   { DEFOP(Iop_RoundF128toInt, UNDEF_ALL), .s390x = 1, .amd64 = 0, .x86 = 0, .arm = 0, .ppc64 = 0, .ppc32 = 0, .mips32 = 0, .mips64 = 0 },
   { DEFOP(Iop_RoundF64toInt, UNDEF_ALL), .s390x = 1, .amd64 = 1, .x86 = 1, .arm = 0, .ppc64 = 0, .ppc32 = 0, .mips32 = 0, .mips64 = 1 },
+  { DEFOP(Iop_RoundF64toIntA0, UNDEF_ALL), .arm64 = 1 },
+  { DEFOP(Iop_RoundF64toIntE, UNDEF_ALL), .arm64 = 1  },
   { DEFOP(Iop_RoundF32toInt, UNDEF_ALL), .s390x = 1, .amd64 = 1, .x86 = 1, .arm = 0, .ppc64 = 0, .ppc32 = 0, .mips32 = 1, .mips64 = 1 },
+  { DEFOP(Iop_RoundF32toIntA0, UNDEF_ALL), .arm64 = 1 },
+  { DEFOP(Iop_RoundF32toIntE, UNDEF_ALL), .arm64 = 1 },
   { DEFOP(Iop_MAddF32,       UNDEF_ALL), .s390x = 1, .amd64 = 0, .x86 = 0, .arm = 0, .ppc64 = 0, .ppc32 = 0, .mips32 = 0, .mips64 = 1 },
   { DEFOP(Iop_MSubF32,       UNDEF_ALL), .s390x = 1, .amd64 = 0, .x86 = 0, .arm = 0, .ppc64 = 0, .ppc32 = 0, .mips32 = 0, .mips64 = 1 },
   { DEFOP(Iop_MAddF64,       UNDEF_ALL), .s390x = 1, .amd64 = 0, .x86 = 0, .arm = 0, .ppc64 = 1, .ppc32 = 1, .mips32 = 0, .mips64 = 1 },
@@ -1208,7 +1208,6 @@ get_irop(IROp op)
       if (p->op == op) {
 #ifdef __s390x__
 #define S390X_FEATURES "../../../tests/s390x_features"
-        int rc;
 
          switch (op) {
          case Iop_I32StoD64:    // CDFTR
@@ -1234,14 +1233,7 @@ get_irop(IROp op)
          case Iop_F64toI32U:
          case Iop_F64toI64U:
          case Iop_F128toI32U:
-         case Iop_F128toI64U: {
-            /* These IROps require the floating point extension facility */
-            rc = system(S390X_FEATURES " s390x-fpext");
-            // s390x_features returns 1 if feature does not exist
-            rc /= 256;
-            if (rc != 0) return NULL;
-         }
-         break;
+         case Iop_F128toI64U:
          /* PFPO Iops */
          case Iop_F32toD32:
          case Iop_F32toD64:
@@ -1260,14 +1252,7 @@ get_irop(IROp op)
          case Iop_D64toF128:
          case Iop_D128toF32:
          case Iop_D128toF64:
-         case Iop_D128toF128: {
-            /* These IROps require the Perform Floating Point Operation
-               facility */
-            rc = system(S390X_FEATURES " s390x-pfpo");
-            // s390x_features returns 1 if feature does not exist
-            rc /= 256;
-            if (rc != 0) return NULL;
-         }
+         case Iop_D128toF128:
          break;
          /* Other */
          default:
@@ -1445,6 +1430,6 @@ get_irop(IROp op)
       }
    }
 
-   fprintf(stderr, "unknown opcode %d\n", op);
+   fprintf(stderr, "unknown opcode %u\n", (unsigned)op);
    exit(1);
 }

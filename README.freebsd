@@ -96,9 +96,10 @@ When you add syscalls you will need to modify several files
       or only input arguments just need a BSDX_ macro (before only). Syscalls
       with output arguments need a BSDXY macro (before and after).
    d) If the syscall uses 64bit arguments (long long) then instead of putting
-      the wrapper definitions in syswrap-freebsd.c there will be one definition
-      for each platform amd64 and x86 in syswrap-x86-freebsd.c and
-      syswrap-amd64-freebsd.c.
+      the wrapper definitions in syswrap-freebsd.c there will be two kinds of
+      definition. A 32bit version with split 64bit arguments for x86 in
+      syswrap-x86-freebsd.c and 64bit versions without any splitting for amd64
+      and arm64 in syswrap-amd64-freebsd.c/syswrap-arm64-freebsd.c.
       Each long long needs to be split into two ARGs in the x86 version.
 
 The PRE (before) wrapper
@@ -144,6 +145,12 @@ They just contain a POST_MEM_WRITE macro for each output argument.
 - Additions to auxv. Depending on the entry it may need to be simply copied
   from the host to the guest, it may need to be modified for the guest or
   it may need to be ignored. See initimg-freebsd.c.
+- Versioned ioctls. ioctls such as CAMIOCOMMAND are versioned (with
+  CAM_VERSION). When the version number is increased the result is a new
+  ioctl ID. That means that the ioctl checking code no longer gets called.
+  New versions require updates to the version number and the structs that
+  are used. (Backwards compatibility is maintained by adding fixed macros
+  like CAM_VERSION_0x19, but these are not currently supported in Valgrind).
 - ELF PT_LOAD mappings. Either Valgrind will assert or there will be no source
   information in error reports. See VG_(di_notify_mmap) in debuginfo.c
 - Because they contain many deliberate errors the regression tests are prone
@@ -167,13 +174,70 @@ you will need to install coreutils (for GNU cp) and modify the
 nightly/conf/freebsd.* files. The default configuration
 sends an e-mail to the valgrind-testresults mailing list.
 
+3. Version specific code
+
+For its own use of syscalls and memory layout Valgrind sometimes needs
+to detect which version of FreeBSD it is being built on. Historically
+that was done using 'uname' at configure time. It can also be achieved
+using the __FreeBSD_version macro (in osreldate.h and sys/param.h).
+The former header just defines that macro. To see what changes are associated
+with different values of the macro you can search the FreeBSD source and
+git history. You can also look at
+
+https://docs.freebsd.org/en/books/porters-handbook/versions/
+
+Capsicum enabled applications
+-----------------------------
+Valgrind will not work well with Capsicum enabled applications. As an example,
+if you run
+
+valgrind --tool=massif echo hello
+
+you will get something like this in the output:
+
+==66088==
+==66088== WARNING: Valgrind may not operate correctly in capability mode.
+==66088==          Please consider disabling capability by using the RUNNING_ON_VALGRIND mechanism.
+==66088==          See http://valgrind.org/docs/manual/manual-core-adv.html#manual-core-adv.clientreq
+hello
+==66088==
+==66088== Error: can not open xtree output file `/home/paulf/massif.out.66088'
+
+Additionally capabilities mode can affect how the kernel uses syscall
+parameters. An example of this is the fd argument of the *at() syscall
+family. In capability mode fd must not be AT_FDCWD. The consequence
+of this is that we ought do adapt the syscall parameter checking depending
+on whether the guest is running in capability mode or not. Since we do not
+recommend running Capsicum enabled applications under Valgrind the checks
+are not adapted to to capability mode. Not to mention that adding checks
+for this would add a lot of complexity to these syscall wrappers
+
+One way that you might conditionally disable capabilities in your code as the
+above warning suggests is to do as follows.
+
+#if !defined(NDEBUG)
+#include <valgrind/valgrind.h>
+#endif
+
+void do_capsicum_setup(void); // contains capabilities code
+
+#if !defined(NDEBUG)
+    if (!RUNNING_ON_VALGRIND)
+    {
+#endif
+        do_capsicum_setup();
+#if !defined(NDEBUG)
+    }
+#endif
+
+
 Feedback
 ~~~~~~~~
 
 If you find any problems please create a bugzilla report at
 https://bugs.kde.org using the Valgrind product.
 
-Alternatively you can use the FreeBSD bugilla
+Alternatively you can use the FreeBSD bugzilla
 https://bugs.freebsd.org
 
 Credits

@@ -8,7 +8,7 @@
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
+   the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
 
    This program is distributed in the hope that it will be useful,
@@ -162,6 +162,9 @@ extern Int *syscalls_to_catch;
                                VG_(strtoull16) ((s),(r)) \
                                : VG_(strtoull10) ((s),(r)))
 
+#define memcpy(_dd,_ss,_sz)   VG_(memcpy)((_dd),(_ss),(_sz))
+#define memset(_ss,_cc,_sz)   VG_(memset)((_ss),(_cc),(_sz))
+
 #define malloc(sz)            VG_(malloc)  ("gdbsrv", sz)
 #define calloc(n,sz)          VG_(calloc)  ("gdbsrv", n, sz)
 #define realloc(p,size)       VG_(realloc) ("gdbsrv", p, size)
@@ -312,7 +315,6 @@ int decode_X_packet (char *from, int packet_len, CORE_ADDR * mem_addr_ptr,
 		     unsigned int *len_ptr, unsigned char *to);
 
 int unhexify (char *bin, const char *hex, int count);
-int hexify (char *hex, const char *bin, int count);
 /* heximage builds an image of bin according to byte order of the architecture 
    Useful for register and int image */
 char* heximage (char *buf, const char *bin, int count);
@@ -377,5 +379,8 @@ void init_registers (void);
 
 /* Version information, from version.c.  */
 extern const char version[];
+
+/* Shared remote utils functions with vgdb.  */
+#include "remote-utils-shared.h"
 
 #endif /* SERVER_H */

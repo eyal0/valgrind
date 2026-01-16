@@ -13,7 +13,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -60,7 +60,7 @@
    The call to MARK_STACK_NO_EXEC should be put unconditionally
    at the end of all asm source files.
 */
-#if defined(VGO_linux)
+#if defined(VGO_linux) || defined(VGO_freebsd)
 #  if defined(VGA_arm)
 #    define MARK_STACK_NO_EXEC .section .note.GNU-stack,"",%progbits
 #  else

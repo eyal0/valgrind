@@ -4,24 +4,23 @@ include $(top_srcdir)/Makefile.tool-tests.am
 dist_noinst_SCRIPTS = filter_stderr
 
 EXTRA_DIST = \
-	intdiv.stdout.exp intdiv.stderr.exp intdiv.vgtest \
-	ldrt.stdout.exp ldrt.stderr.exp ldrt.vgtest \
-	ldrt_arm.stdout.exp ldrt_arm.stderr.exp ldrt_arm.vgtest \
-	neon128.stdout.exp neon128.stderr.exp neon128.vgtest \
-	neon64.stdout.exp neon64.stderr.exp neon64.vgtest \
-	v6intARM.stdout.exp v6intARM.stderr.exp v6intARM.vgtest \
-	v6intThumb.stdout.exp v6intThumb.stderr.exp v6intThumb.vgtest \
-	v6media.stdout.exp v6media.stderr.exp v6media.vgtest \
-	v8crypto_a.stdout.exp v8crypto_a.stderr.exp v8crypto_a.vgtest \
-	v8crypto_t.stdout.exp v8crypto_t.stderr.exp v8crypto_t.vgtest \
-        v8fpsimd_a.stdout.exp v8fpsimd_a.stderr.exp v8fpsimd_a.vgtest \
-        v8fpsimd_t.stdout.exp v8fpsimd_t.stderr.exp v8fpsimd_t.vgtest \
-	v8memory_a.stdout.exp v8memory_a.stderr.exp v8memory_a.vgtest \
-	v8memory_t.stdout.exp v8memory_t.stderr.exp v8memory_t.vgtest \
-	vcvt_fixed_float_VFP.stdout.exp vcvt_fixed_float_VFP.stderr.exp \
-		vcvt_fixed_float_VFP.vgtest \
-	vfp.stdout.exp vfp.stderr.exp vfp.vgtest \
-	vfpv4_fma.stdout.exp vfpv4_fma.stderr.exp vfpv4_fma.vgtest
+	intdiv.stdout.exp intdiv.vgtest \
+	ldrt.stdout.exp ldrt.vgtest \
+	ldrt_arm.stdout.exp ldrt_arm.vgtest \
+	neon128.stdout.exp neon128.vgtest \
+	neon64.stdout.exp neon64.vgtest \
+	v6intARM.stdout.exp v6intARM.vgtest \
+	v6intThumb.stdout.exp v6intThumb.vgtest \
+	v6media.stdout.exp v6media.vgtest \
+	v8crypto_a.stdout.exp v8crypto_a.vgtest \
+	v8crypto_t.stdout.exp v8crypto_t.vgtest \
+        v8fpsimd_a.stdout.exp v8fpsimd_a.vgtest \
+        v8fpsimd_t.stdout.exp v8fpsimd_t.vgtest \
+	v8memory_a.stdout.exp v8memory_a.vgtest \
+	v8memory_t.stdout.exp v8memory_t.vgtest \
+	vcvt_fixed_float_VFP.stdout.exp vcvt_fixed_float_VFP.vgtest \
+	vfp.stdout.exp vfp.vgtest \
+	vfpv4_fma.stdout.exp vfpv4_fma.vgtest
 
 check_PROGRAMS = \
 	allexec \
@@ -61,16 +60,18 @@ v6intThumb_CFLAGS = $(AM_CFLAGS) -g -O0 -mcpu=cortex-a8 -mthumb
 
 v6media_CFLAGS    = $(AM_CFLAGS) -g -O0 -mcpu=cortex-a8 -mthumb
 
-v8crypto_a_CFLAGS = $(AM_CFLAGS) -g -O0 -mfpu=crypto-neon-fp-armv8 -marm
-v8crypto_t_CFLAGS = $(AM_CFLAGS) -g -O0 -mfpu=crypto-neon-fp-armv8 -mthumb
+v8crypto_a_CFLAGS = $(AM_CFLAGS) -g -O0 -mfpu=crypto-neon-fp-armv8 -marm -march=armv8-a
+v8crypto_t_CFLAGS = $(AM_CFLAGS) -g -O0 -mfpu=crypto-neon-fp-armv8 -mthumb -march=armv8-a
 
-v8fpsimd_a_CFLAGS = $(AM_CFLAGS) -g -O0 -mfpu=crypto-neon-fp-armv8 -marm
-v8fpsimd_t_CFLAGS = $(AM_CFLAGS) -g -O0 -mfpu=crypto-neon-fp-armv8 -mthumb
+v8fpsimd_a_CFLAGS = $(AM_CFLAGS) -g -O0 -mfpu=crypto-neon-fp-armv8 -marm -march=armv8-a
+v8fpsimd_t_CFLAGS = $(AM_CFLAGS) -g -O0 -mfpu=crypto-neon-fp-armv8 -mthumb -march=armv8-a
 
 v8memory_a_CFLAGS = $(AM_CFLAGS) -g -O0 \
 			-march=armv8-a -mfpu=crypto-neon-fp-armv8 -marm
 v8memory_t_CFLAGS = $(AM_CFLAGS) -g -O0 \
 			-march=armv8-a -mfpu=crypto-neon-fp-armv8 -mthumb
+
+vcvt_fixed_float_VFP_CFLAGS = $(AM_CFLAGS) -g -O0 -mcpu=cortex-a8 -mfpu=neon
 
 vfp_CFLAGS        = $(AM_CFLAGS) -g -O0 -mcpu=cortex-a8 \
 			-mfpu=neon \

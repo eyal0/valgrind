@@ -1,6 +1,6 @@
 /* <ctype.h> replacement macros.
 
-   Copyright (C) 2000-2023 Free Software Foundation, Inc.
+   Copyright (C) 2000-2025 Free Software Foundation, Inc.
    Contributed by Zack Weinberg <zackw@stanford.edu>.
 
 This file is part of the libiberty library.
@@ -122,7 +122,6 @@ extern const unsigned char  _sch_tolower[256];
 #if 0 /* in valgrind */
 #include <ctype.h>
 #endif /* ! in valgrind */
-
 #undef isalpha
 #define isalpha(c) do_not_use_isalpha_with_safe_ctype
 #undef isalnum

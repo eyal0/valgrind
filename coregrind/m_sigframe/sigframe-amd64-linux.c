@@ -13,7 +13,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -591,8 +591,8 @@ void VG_(sigframe_destroy)( ThreadId tid, Bool isRT )
 
    if (VG_(clo_trace_signals))
       VG_(message)(
-         Vg_DebugMsg, 
-         "VG_(signal_return) (thread %u): isRT=%d valid magic; RIP=%#llx\n",
+         Vg_DebugMsg,
+         "VG_(sigframe_destroy) (thread %u): isRT=%d valid magic; RIP=%#llx\n",
          tid, isRT, tst->arch.vex.guest_RIP);
 
    /* tell the tools */

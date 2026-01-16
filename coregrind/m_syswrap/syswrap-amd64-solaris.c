@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -233,7 +233,7 @@ void ML_(save_machine_context)(ThreadId tid, vki_ucontext_t *uc,
       buf[2] = VKI_UC_GUEST_CC_DEP1(uc);
       buf[3] = VKI_UC_GUEST_CC_DEP2(uc);
       buf[4] = uc->uc_mcontext.gregs[VKI_REG_RFL];
-      checksum = ML_(fletcher64)((UInt*)&buf, sizeof(buf) / sizeof(UInt));
+      checksum = ML_(fletcher64)((UInt*)&buf, 2 * sizeof(buf) / sizeof(buf[0]));
       VKI_UC_GUEST_RFLAGS_CHECKSUM(uc) = checksum;
    }
 
@@ -439,7 +439,7 @@ void ML_(restore_machine_context)(ThreadId tid, vki_ucontext_t *uc,
             buf[3] = VKI_UC_GUEST_CC_DEP2(uc);
             buf[4] = rflags;
             checksum = ML_(fletcher64)((UInt*)&buf,
-                                       sizeof(buf) / sizeof(UInt));
+                                       2 * sizeof(buf) / sizeof(buf[0]));
             if (checksum == VKI_UC_GUEST_RFLAGS_CHECKSUM(uc)) {
                /* Check ok, the full restoration is possible. */
                VG_(debugLog)(1, "syswrap-solaris",

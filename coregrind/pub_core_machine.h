@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -69,7 +69,7 @@
 #  define VG_ELF_MACHINE      EM_ARM
 #  define VG_ELF_CLASS        ELFCLASS32
 #  undef  VG_PLAT_USES_PPCTOC
-#elif defined(VGP_arm64_linux)
+#elif defined(VGP_arm64_linux) || defined(VGP_arm64_freebsd)
 #  define VG_ELF_DATA2XXX     ELFDATA2LSB
 #  define VG_ELF_MACHINE      EM_AARCH64
 #  define VG_ELF_CLASS        ELFCLASS64
@@ -126,6 +126,11 @@
 #  define VG_ELF_MACHINE      EM_NANOMIPS
 #  define VG_ELF_CLASS        ELFCLASS32
 #  undef  VG_PLAT_USES_PPCTOC
+#elif defined(VGP_riscv64_linux)
+#  define VG_ELF_DATA2XXX     ELFDATA2LSB
+#  define VG_ELF_MACHINE      EM_RISCV
+#  define VG_ELF_CLASS        ELFCLASS64
+#  undef  VG_PLAT_USES_PPCTOC
 #else
 #  error Unknown platform
 #endif
@@ -163,6 +168,10 @@
 #  define VG_INSTR_PTR        guest_PC
 #  define VG_STACK_PTR        guest_r29
 #  define VG_FRAME_PTR        guest_r30
+#elif defined(VGA_riscv64)
+#  define VG_INSTR_PTR        guest_pc
+#  define VG_STACK_PTR        guest_x2
+#  define VG_FRAME_PTR        guest_x8
 #else
 #  error Unknown arch
 #endif

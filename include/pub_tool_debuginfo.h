@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -182,13 +182,13 @@ typedef  struct _InlIPCursor InlIPCursor;
    be done:
        InlIPCursor *iipc = VG_(new_IIPC)(ep, eip);
        do {
-          buf = VG_(describe_IP)(eip, iipc);
+          buf = VG_(describe_IP)(ep, eip, iipc);
           ... use buf ...
        } while (VG_(next_IIPC)(iipc));
        VG_(delete_IIPC)(iipc);
 
-   To only describe eip, without the inlined calls at eip, give a NULL iipc:
-       buf = VG_(describe_IP)(eip, NULL);   
+   To only describe eip, without the inlined calls at eip, give a NULL iipc, e.g.:
+       buf = VG_(describe_IP)(VG_(current_DiEpoch)(), eip, NULL);
 
    Note, that the returned string is allocated in a static buffer local to
    VG_(describe_IP). That buffer will be overwritten with every invocation.

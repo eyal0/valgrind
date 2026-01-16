@@ -9,10 +9,12 @@
 
    Copyright (C) 2000-2017 Julian Seward 
       jseward@acm.org
+   Copyright (C) 2025 Mark J. Wielaard
+      mark@klomp.org
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -44,6 +46,11 @@
 #include "pub_core_trampoline.h"
 #include "config.h"
 
+#if defined(VGO_darwin)
+// FIXME PJF this is bad (it's a syswrap private function)
+// but the alternative for the moment is crashes when trying to produce stack traces
+extern Bool ML_(safe_to_deref) ( const void *start, SizeT size );
+#endif
 
 /*------------------------------------------------------------*/
 /*---                                                      ---*/
@@ -283,7 +290,7 @@ UInt VG_(get_StackTrace_wrk) ( ThreadId tid_if_known,
    if (do_stats) stats.nr++;
 
    // Does this apply to macOS 10.14 and earlier?
-#  if defined(VGO_freebsd) && (FREEBSD_VERS < FREEBSD_13_0)
+#  if defined(VGO_freebsd) && (__FreeBSD_version < 1300000)
    if (VG_(is_valid_tid)(tid_if_known) &&
       VG_(is_in_syscall)(tid_if_known) &&
       i < max_n_ips) {
@@ -521,6 +528,24 @@ UInt VG_(get_StackTrace_wrk) ( ThreadId tid_if_known,
 #if defined(VGP_amd64_linux) || defined(VGP_amd64_darwin) \
     || defined(VGP_amd64_solaris) || defined(VGP_amd64_freebsd)
 
+/*
+ * Concerning the comment in the function about syscalls, I'm not sure
+ * what changed or when with FreeBSD. The situation going at least
+ * as far back as FreeBSD 12.1 (so Nov 2019) is that system calls are
+ * implemented with generated wrappers that call through an interposing
+ * table of function pointers. The result when built with clang is that
+ * code for the frame pointer prolog is generated but then an optimized
+ * sibling call is made. That means the frame pointer is popped off
+ * the stack and a jmp is made to the function in the table rather than
+ * a call.
+ *
+ * The end result is that, when we are in a syscall it is as though there were
+ * no prolog but a copy of the frame pointer is stored one 64bit word below the
+ * stack pointer. If more recent FreeBSD uses the hack that sets
+ *  ips[i] = *(Addr *)uregs.xsp - 1;
+ * then the caller of the syscall gets added twice.
+ */
+
 UInt VG_(get_StackTrace_wrk) ( ThreadId tid_if_known,
                                /*OUT*/Addr* ips, UInt max_n_ips,
                                /*OUT*/Addr* sps, /*OUT*/Addr* fps,
@@ -594,11 +619,11 @@ UInt VG_(get_StackTrace_wrk) ( ThreadId tid_if_known,
       VG_(printf)("     ipsS[%d]=%#08lx rbp %#08lx rsp %#08lx\n",
                   i-1, ips[i-1], uregs.xbp, uregs.xsp);
 
-#  if defined(VGO_darwin) || (defined(VGO_freebsd) && (FREEBSD_VERS < FREEBSD_13_0))
+#  if defined(VGO_darwin) || (defined(VGO_freebsd) && __FreeBSD_version < 1300000)
    if (VG_(is_valid_tid)(tid_if_known) &&
       VG_(is_in_syscall)(tid_if_known) &&
       i < max_n_ips) {
-      /* On Darwin and FreeBSD, all the system call stubs have no function
+      /* On Darwin, all the system call stubs have no function
        * prolog.  So instead of top of the stack being a new
        * frame comprising a saved BP and a return address, we
        * just have the return address in the caller's frame.
@@ -671,7 +696,20 @@ UInt VG_(get_StackTrace_wrk) ( ThreadId tid_if_known,
          fact that we are prodding at & ((UWord*)fp)[1] and so need to
          adjust the limit check accordingly.  Omitting this has been
          observed to cause segfaults on rare occasions. */
-      if (fp_min <= uregs.xbp && uregs.xbp <= fp_max - 1 * sizeof(UWord)) {
+      if (fp_min <= uregs.xbp && uregs.xbp <= fp_max - 1 * sizeof(UWord)
+#if defined(VGO_darwin)
+          // FIXME PJF temporary? workaround for segfaults
+          // without this extra check there will be some SIGSEGVs which end stuck
+          // in an infinite loop
+
+          // The faulting address seems to be in a fairly small rw- mapping
+          // (according to lldb)
+          // happens in Helgrind multithread apps, error arises in
+          // sync_signalhandler (called from darwin_signal_demux with signal 11)
+
+          && ML_(safe_to_deref)((void*)uregs.xbp, 2*sizeof(UWord))
+#endif
+                                                                        ) {
          /* fp looks sane, so use it. */
          uregs.xip = (((UWord*)uregs.xbp)[1]);
          if (0 == uregs.xip || 1 == uregs.xip) break;
@@ -1161,7 +1199,7 @@ UInt VG_(get_StackTrace_wrk) ( ThreadId tid_if_known,
 
 /* ------------------------ arm64 ------------------------- */
 
-#if defined(VGP_arm64_linux)
+#if defined(VGP_arm64_linux) || defined(VGP_arm64_freebsd)
 
 UInt VG_(get_StackTrace_wrk) ( ThreadId tid_if_known,
                                /*OUT*/Addr* ips, UInt max_n_ips,
@@ -1207,14 +1245,20 @@ UInt VG_(get_StackTrace_wrk) ( ThreadId tid_if_known,
    /* vg_assert(fp_min <= fp_max);*/
    // On Darwin, this kicks in for pthread-related stack traces, so they're
    // only 1 entry long which is wrong.
+#  if defined(VGO_linux)
    if (fp_min + 512 >= fp_max) {
+#  elif defined(VGO_freebsd)
+   if (fp_max == 0) {
+#endif
+#  if defined(VGO_linux) || defined(VGO_freebsd)
       /* If the stack limits look bogus, don't poke around ... but
          don't bomb out either. */
       if (sps) sps[0] = uregs.sp;
       if (fps) fps[0] = uregs.x29;
       ips[0] = uregs.pc;
       return 1;
-   } 
+   }
+#endif
 
    /* */
 
@@ -1505,6 +1549,101 @@ UInt VG_(get_StackTrace_wrk) ( ThreadId tid_if_known,
 
 #endif
 
+/* ------------------------ riscv64 ------------------------- */
+
+#if defined(VGP_riscv64_linux)
+
+UInt VG_(get_StackTrace_wrk) ( ThreadId tid_if_known,
+                               /*OUT*/Addr* ips, UInt max_n_ips,
+                               /*OUT*/Addr* sps, /*OUT*/Addr* fps,
+                               const UnwindStartRegs* startRegs,
+                               Addr fp_max_orig )
+{
+   Bool  debug = False;
+   Int   i;
+   Addr  fp_max;
+   UInt  n_found = 0;
+   const Int cmrf = VG_(clo_merge_recursive_frames);
+
+   vg_assert(sizeof(Addr) == sizeof(UWord));
+   vg_assert(sizeof(Addr) == sizeof(void*));
+
+   D3UnwindRegs uregs;
+   uregs.pc = startRegs->r_pc;
+   uregs.sp = startRegs->r_sp;
+   uregs.fp = startRegs->misc.RISCV64.r_fp;
+   uregs.ra = startRegs->misc.RISCV64.r_ra;
+   Addr fp_min = uregs.sp - VG_STACK_REDZONE_SZB;
+
+   /* Snaffle IPs from the client's stack into ips[0 .. max_n_ips-1],
+      stopping when the trail goes cold, which we guess to be
+      when FP is not a reasonable stack location. */
+
+   fp_max = fp_max_orig;
+   if (fp_max >= sizeof(Addr))
+      fp_max -= sizeof(Addr);
+
+   if (debug)
+      VG_(printf)("\nmax_n_ips=%u fp_min=0x%lx fp_max_orig=0x%lx, "
+                  "fp_max=0x%lx pc=0x%lx sp=0x%lx fp=0x%lx ra=0x%lx\n",
+                  max_n_ips, fp_min, fp_max_orig, fp_max,
+                  uregs.pc, uregs.sp, uregs.fp, uregs.ra);
+
+   if (sps) sps[0] = uregs.sp;
+   if (fps) fps[0] = uregs.fp;
+   ips[0] = uregs.pc;
+   i = 1;
+
+   /* Loop unwinding the stack, using CFI. */
+   while (True) {
+      if (debug)
+         VG_(printf)("i: %d, pc: 0x%lx, sp: 0x%lx, fp: 0x%lx, ra: 0x%lx\n",
+                     i, uregs.pc, uregs.sp, uregs.fp, uregs.ra);
+      if (i >= max_n_ips)
+         break;
+
+      if (VG_(use_CF_info)( &uregs, fp_min, fp_max )) {
+         if (sps) sps[i] = uregs.sp;
+         if (fps) fps[i] = uregs.fp;
+         ips[i++] = uregs.pc - 1;
+         if (debug)
+            VG_(printf)(
+               "USING CFI: pc: 0x%lx, sp: 0x%lx, fp: 0x%lx, ra: 0x%lx\n",
+               uregs.pc, uregs.sp, uregs.fp, uregs.ra);
+         uregs.pc = uregs.pc - 1;
+         RECURSIVE_MERGE(cmrf,ips,i);
+         continue;
+      }
+
+      /* A problem on the first frame? Lets assume it was a bad jump.
+         We will use the link register and the current stack and frame
+         pointers and see if we can use the CFI in the next round. */
+      if (i == 1) {
+         uregs.pc = uregs.ra;
+         uregs.ra = 0;
+
+         if (sps) sps[i] = uregs.sp;
+         if (fps) fps[i] = uregs.fp;
+         ips[i++] = uregs.pc - 1;
+         if (debug)
+            VG_(printf)(
+               "USING bad-jump: pc: 0x%lx, sp: 0x%lx, fp: 0x%lx, ra: 0x%lx\n",
+               uregs.pc, uregs.sp, uregs.fp, uregs.ra);
+         uregs.pc = uregs.pc - 1;
+         RECURSIVE_MERGE(cmrf,ips,i);
+         continue;
+      }
+
+      /* No luck.  We have to give up. */
+      break;
+   }
+
+   n_found = i;
+   return n_found;
+}
+
+#endif
+
 /*------------------------------------------------------------*/
 /*---                                                      ---*/
 /*--- END platform-dependent unwinder worker functions     ---*/
@@ -1574,10 +1713,60 @@ UInt VG_(get_StackTrace_with_deltas)(
                   tid, stack_highest_byte,
                   startRegs.r_pc, startRegs.r_sp);
 
-   return VG_(get_StackTrace_wrk)(tid, ips, n_ips, 
+   Int found = VG_(get_StackTrace_wrk)(tid, ips, n_ips,
                                        sps, fps,
                                        &startRegs,
                                        stack_highest_byte);
+
+#if defined(VGO_linux)
+   /* glibc might insert some extra frames before doing a syscall to support
+      thread cancellation.  This breaks various suppressions and regtests
+      involving checking syscall arguments. So when processing a syscall just
+      remove those extra frames from the top of the call stack.  */
+   if (VG_(is_in_syscall)(tid)) {
+      Int i;
+      Int start = 0;
+      DiEpoch ep = VG_(current_DiEpoch)();
+      /* We want to keep at least one frame.  */
+      for (i = 0; i < found - 1; i++) {
+         /* This could be made a little more efficient by doing the lookups
+            for the symbols at glibc load time and check the address falls
+            inside the function symbol address range here. But given this
+            is only called during syscall processing, this is probably fine
+            for now.  */
+         const HChar *buf;
+         if (VG_(get_fnname_raw)(ep, ips[i], &buf)) { // raw, don't demangle
+            if (VG_STREQ("__syscall_cancel_arch", buf) ||
+                VG_STREQ("__internal_syscall_cancel", buf) ||
+#if defined(VGP_x86_linux) || defined(VGP_arm_linux)
+                VG_STREQ("__libc_do_syscall", buf) ||
+#endif
+#if defined(VGP_x86_linux)
+                VG_STREQ("_dl_sysinfo_int80", buf) ||
+#endif
+                VG_STREQ("__syscall_cancel", buf)) {
+               start++;
+               continue; // Maybe the next one is special too?
+            } else {
+               break; // Not special, only skip top stack names.
+            }
+         } else {
+            break; // No name, not special, don't skip.
+         }
+      }
+
+      if (start > 0) {
+         for (i = 0; i < (found - start); i++) {
+            ips[i] = ips[i + start];
+            if (sps) sps[i] = sps[i + start];
+            if (fps) fps[i] = fps[i + start];
+         }
+         return found - start;
+      }
+   }
+#endif
+
+   return found;
 }
 
 UInt VG_(get_StackTrace) ( ThreadId tid, 

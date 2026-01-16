@@ -13,7 +13,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -62,7 +62,8 @@ extern Bool ML_(read_elf_object) ( DebugInfo* di );
    function.  */
 extern Bool ML_(read_elf_debug) ( DebugInfo* di );
 
-extern Bool ML_(check_elf_and_get_rw_loads) ( Int fd, const HChar* filename, Int * rw_load_count );
+extern Bool ML_(check_elf_and_get_rw_loads) ( Int fd, const HChar* filename,
+                                            Int * rw_load_count, Bool from_nsegments );
 
 
 #endif /* ndef __PRIV_READELF_H */

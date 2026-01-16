@@ -9,7 +9,7 @@
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
+   the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
 
    This program is distributed in the hope that it will be useful,
@@ -867,6 +867,8 @@ void valgrind_initialize_target(void)
    mips64_init_architecture(&the_low_target);
 #elif defined(VGA_nanomips)
    nanomips_init_architecture(&the_low_target);
+#elif defined(VGA_riscv64)
+   riscv64_init_architecture(&the_low_target);
 #else
    #error "architecture missing in target.c valgrind_initialize_target"
 #endif

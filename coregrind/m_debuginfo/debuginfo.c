@@ -14,7 +14,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -60,10 +60,13 @@
 #if defined(VGO_linux) || defined(VGO_solaris) || defined(VGO_freebsd)
 # include "priv_readelf.h"
 # include "priv_readdwarf3.h"
-# include "priv_readpdb.h"
 #elif defined(VGO_darwin)
 # include "priv_readmacho.h"
+# include "pub_core_mach.h"
+#endif
 # include "priv_readpdb.h"
+#if defined(VGO_freebsd)
+#include "pub_core_clientstate.h"
 #endif
 
 
@@ -323,6 +326,10 @@ DebugInfo* alloc_DebugInfo( const HChar* filename )
       di->ddump_frames = VG_(clo_debug_dump_frames);
    }
 
+#if DARWIN_VERS >= DARWIN_11_00
+   di->from_memory = False;
+#endif
+
    return di;
 }
 
@@ -549,59 +556,41 @@ static Bool ranges_overlap (Addr s1, SizeT len1, Addr s2, SizeT len2 )
    return True;
 }
 
-/*
- * PJF 2023-09-23
- *
- * FreeBSD can perform a temporary mapping when loading exes
- * and shared libraries. This is seen as a single page mapped
- * before the ro/rx/rw mappings from the ELF file itself. More
- * importantly, FreeBSD can reuse that same page when loading
- * subsequent shared libraries. That means that we see this
- * page as an overlap. Previously we noted that the mapping
- * was not fixed and ignored it by returning early from
- * VG_(di_notify_mmap).
- *
- * That works OK in general, but not for the tool itself.
- * In order to read symbols for the tool, ML_(read_elf_object)
- * needs to match up the ELF headers with the DebugInfo maps
- * (populated from the global nsegments array).
- *
- * Two possible solutions would be to hack parse_procselfmaps
- * even more so that it doesn't record the ro segment (is
- * that info in kve_flags?). The other, which was also my
- * original fix for this problem, is to just ignore identical
- * ro mappings for different files on FreeBSD. I'm not certain
- * that the size is always one page - that could be used to
- * tighten the check even more.
- */
-
 /* Do the basic mappings of the two DebugInfos overlap in any way? */
 static Bool do_DebugInfos_overlap ( const DebugInfo* di1, const DebugInfo* di2 )
 {
-   Word i, j;
    vg_assert(di1);
    vg_assert(di2);
+#if defined(VGO_darwin) && DARWIN_VERS >= DARWIN_10_15
+   // FIXME: This is probably wrong but the other methods returns too many false positives
+   // as it doesn't account for munmap being called on one of these maps.
+   // dyld will mmap and then munmap every library ro_map at the same address thus every library shows
+   // an overlap and only the last is retained, making most debug UNKNOW_FUNCTION UNKNOWN_OBJECT.
+   // Seeing how discard_syms_in_range relies exclusively on text_* to check conflicts, let's do the same here
+
+   // Sanity check needed by discard_DebugInfos_which_overlap_with
+   if (di1 == di2) {
+     return True;
+   }
+   if (!di1->text_present || !di2->text_present) {
+     return False;
+   }
+   return ranges_overlap(di1->text_avma, di1->text_size, di2->text_avma, di2->text_size);
+#else
+   Word i, j;
+
    for (i = 0; i < VG_(sizeXA)(di1->fsm.maps); i++) {
       const DebugInfoMapping* map1 = VG_(indexXA)(di1->fsm.maps, i);
       for (j = 0; j < VG_(sizeXA)(di2->fsm.maps); j++) {
          const DebugInfoMapping* map2 = VG_(indexXA)(di2->fsm.maps, j);
          if (ranges_overlap(map1->avma, map1->size, map2->avma, map2->size)) {
-#if defined(VGO_freebsd)
-            if (di1 != di2 && map1->ro && map2->ro &&
-                map1->avma == map2->avma && map1->size == map2->size) {
-               if (VG_(debugLog_getLevel)() >= 3) {
-                   VG_(dmsg)("do_DebugInfos_overlap-0: identical ro mappings from files %s and %s\n",
-                            di1->fsm.filename, di2->fsm.filename);
-               }
-               continue;
-            }
-#endif
             return True;
          }
       }
    }
 
    return False;
+#endif
 }
 
 
@@ -701,7 +690,6 @@ static void check_CFSI_related_invariants ( const DebugInfo* di )
       been successfully read.  And that shouldn't happen until we have
       both a r-x and rw- mapping for the object.  Hence: */
    vg_assert(di->fsm.have_rx_map);
-   vg_assert(di->fsm.rw_map_count);
    for (i = 0; i < VG_(sizeXA)(di->fsm.maps); i++) {
       const DebugInfoMapping* map = VG_(indexXA)(di->fsm.maps, i);
       /* We are interested in r-x mappings only */
@@ -730,7 +718,6 @@ static void check_CFSI_related_invariants ( const DebugInfo* di )
                        "DiCfsi invariant (1) verification failed");
          }
       }
-      di2 = NULL;
    }
 
    /* degenerate case: all r-x sections are empty */
@@ -1110,7 +1097,8 @@ static ULong di_notify_ACHIEVE_ACCEPT_STATE ( struct _DebugInfo* di )
           exe_handlers->load_fn ( == VG_(load_ELF) )
           [or load_MACHO].
 
-       This does the mmap'ing and creates the associated NSegments.
+       This does the mmap'ing with VG_(am_do_mmap_NO_NOTIFY)
+       and creates the associated NSegments.
 
        The NSegments may get merged, (see maybe_merge_nsegments)
        so there could be more PT_LOADs than there are NSegments.
@@ -1163,17 +1151,14 @@ static ULong di_notify_ACHIEVE_ACCEPT_STATE ( struct _DebugInfo* di )
 ULong VG_(di_notify_mmap)( Addr a, Bool allow_SkFileV, Int use_fd )
 {
    NSegment const * seg;
-   Int rw_load_count;
+   Int expected_rw_load_count;
    const HChar* filename;
    Bool       is_rx_map, is_rw_map, is_ro_map;
 
    DebugInfo* di;
    Int        actual_fd, oflags;
-#if defined(VGO_darwin)
-   SysRes     preadres;
-   HChar      buf1k[1024];
-#else
-   Bool       elf_ok;
+#if defined(VGO_freebsd)
+   static Bool first_fixed_file = True;
 #endif
 
    const Bool       debug = VG_(debugLog_getLevel)() >= 3;
@@ -1233,7 +1218,12 @@ ULong VG_(di_notify_mmap)( Addr a, Bool allow_SkFileV, Int use_fd )
    if (sr_isError(statres)) {
       DebugInfo fake_di;
       Bool quiet = VG_(strstr)(filename, "/var/run/nscd/") != NULL
-                   || VG_(strstr)(filename, "/dev/shm/") != NULL;
+#if defined(VGO_darwin)
+                   || VG_(strstr)(filename, DARWIN_FAKE_MEMORY_PATH) != NULL
+#endif
+                   || VG_(strstr)(filename, "/dev/shm/") != NULL
+                   || VG_(strncmp)("/memfd:", filename,
+                                   VG_(strlen)("/memfd:")) == 0;
       if (!quiet && VG_(clo_verbosity) > 1) {
          VG_(memset)(&fake_di, 0, sizeof(fake_di));
          fake_di.fsm.filename = ML_(dinfo_strdup)("di.debuginfo.nmm", filename);
@@ -1243,8 +1233,14 @@ ULong VG_(di_notify_mmap)( Addr a, Bool allow_SkFileV, Int use_fd )
    }
 
    /* Finally, the point of all this stattery: if it's not a regular file,
-      don't try to read debug info from it. */
-   if (! VKI_S_ISREG(statbuf.mode))
+      don't try to read debug info from it. Also if it is a "regular file"
+      but has a zero size then skip it. Having a zero size will definitely
+      fail when trying to create an DiImage and wouldn't be a valid elf or
+      macho file. This can happen when mmapping a deleted file, which
+      would normally fail in the check above, because the stat call will
+      fail.  But if the deleted file is on an NFS file system then a fake
+      (regular) empty file might be returned.  */
+   if (! VKI_S_ISREG(statbuf.mode) || statbuf.size == 0)
       return 0;
 
    /* no uses of statbuf below here. */
@@ -1304,7 +1300,7 @@ ULong VG_(di_notify_mmap)( Addr a, Bool allow_SkFileV, Int use_fd )
    is_rx_map = seg->hasR && seg->hasX;
    is_rw_map = seg->hasR && seg->hasW;
 #  elif defined(VGA_amd64) || defined(VGA_ppc64be) || defined(VGA_ppc64le)  \
-        || defined(VGA_arm) || defined(VGA_arm64)
+        || defined(VGA_arm) || defined(VGA_arm64) || defined(VGA_riscv64)
    is_rx_map = seg->hasR && seg->hasX && !seg->hasW;
    is_rw_map = seg->hasR && seg->hasW && !seg->hasX;
 #  elif defined(VGP_s390x_linux)
@@ -1333,16 +1329,21 @@ ULong VG_(di_notify_mmap)( Addr a, Bool allow_SkFileV, Int use_fd )
 #if defined(VGO_freebsd)
    /* Ignore non-fixed read-only mappings.  The dynamic linker may be
     * mapping something for its own transient purposes. */
-   if (!seg->isFF && is_ro_map && debug) {
-      VG_(dmsg)("di_notify_mmap-4: non-fixed ro map\n");
+   if (!seg->isFF && is_ro_map) {
+      if (first_fixed_file) {
+         if (debug) {
+            VG_(dmsg)("di_notify_mmap-4: first non-fixed ro map\n");
+         }
+         first_fixed_file = False;
+      } else {
+         if (debug) {
+            VG_(dmsg)("di_notify_mmap-5: not first non-fixed ro map, ignored\n");
+         }
+         return 0;
+      }
    }
 #endif
 
-#if defined(VGO_darwin)
-   /* Peer at the first few bytes of the file, to see if it is an ELF */
-   /* object file. Ignore the file if we do not have read permission. */
-   VG_(memset)(buf1k, 0, sizeof(buf1k));
-#endif
 
    oflags = VKI_O_RDONLY;
 #  if defined(VKI_O_LARGEFILE)
@@ -1353,12 +1354,16 @@ ULong VG_(di_notify_mmap)( Addr a, Bool allow_SkFileV, Int use_fd )
       SysRes fd = VG_(open)( filename, oflags, 0 );
       if (sr_isError(fd)) {
          if (sr_Err(fd) != VKI_EACCES) {
+#if defined(VGO_darwin)
+            const HChar* message = "can't open file to inspect mach-o header";
+#else
+            const HChar* message = "can't open file to inspect ELF header";
+#endif
             DebugInfo fake_di;
             VG_(memset)(&fake_di, 0, sizeof(fake_di));
             fake_di.fsm.filename = ML_(dinfo_strdup)("di.debuginfo.nmm",
                                                      filename);
-            ML_(symerr)(&fake_di, True,
-                        "can't open file to inspect ELF header");
+            ML_(symerr)(&fake_di, True, message);
          }
          return 0;
       }
@@ -1367,46 +1372,23 @@ ULong VG_(di_notify_mmap)( Addr a, Bool allow_SkFileV, Int use_fd )
       actual_fd = use_fd;
    }
 
-#if defined(VGO_darwin)
-   preadres = VG_(pread)( actual_fd, buf1k, sizeof(buf1k), 0 );
-   if (use_fd == -1) {
-      VG_(close)( actual_fd );
-   }
+   expected_rw_load_count = 0;
 
-   if (sr_isError(preadres)) {
-      DebugInfo fake_di;
-      VG_(memset)(&fake_di, 0, sizeof(fake_di));
-      fake_di.fsm.filename = ML_(dinfo_strdup)("di.debuginfo.nmm", filename);
-      ML_(symerr)(&fake_di, True, "can't read file to inspect Mach-O headers");
-      return 0;
-   }
-   if (sr_Res(preadres) == 0)
-      return 0;
-   vg_assert(sr_Res(preadres) > 0 && sr_Res(preadres) <= sizeof(buf1k) );
+   Bool check_ok = False;
+#if defined(VGO_darwin)
+   check_ok = ML_(check_macho_and_get_rw_loads)( actual_fd, &expected_rw_load_count );
+#else
+   /* We're only interested in mappings of object files. */
+   check_ok = ML_(check_elf_and_get_rw_loads) ( actual_fd, filename, &expected_rw_load_count, use_fd == -1 );
 #endif
 
-   /* We're only interested in mappings of object files. */
-#  if defined(VGO_linux) || defined(VGO_solaris) || defined(VGO_freebsd)
-
-   rw_load_count = 0;
-
-   elf_ok = ML_(check_elf_and_get_rw_loads) ( actual_fd, filename, &rw_load_count );
-
    if (use_fd == -1) {
       VG_(close)( actual_fd );
    }
 
-   if (!elf_ok) {
+   if (!check_ok) {
       return 0;
    }
-
-#  elif defined(VGO_darwin)
-   if (!ML_(is_macho_object_file)( buf1k, (SizeT)sr_Res(preadres) ))
-      return 0;
-   rw_load_count = 1;
-#  else
-#    error "unknown OS"
-#  endif
 
    /* See if we have a DebugInfo for this filename.  If not,
       create one. */
@@ -1466,8 +1448,7 @@ ULong VG_(di_notify_mmap)( Addr a, Bool allow_SkFileV, Int use_fd )
    /* So, finally, are we in an accept state? */
    vg_assert(!di->have_dinfo);
    if (di->fsm.have_rx_map &&
-       rw_load_count >= 1 &&
-       di->fsm.rw_map_count == rw_load_count) {
+       di->fsm.rw_map_count == expected_rw_load_count) {
       /* Ok, so, finally, we found what we need, and we haven't
          already read debuginfo for this object.  So let's do so now.
          Yee-ha! */
@@ -1480,7 +1461,8 @@ ULong VG_(di_notify_mmap)( Addr a, Bool allow_SkFileV, Int use_fd )
       /* If we don't have an rx and rw mapping, go no further. */
       if (debug)
          VG_(dmsg)("di_notify_mmap-6: "
-                   "no dinfo loaded %s (no rx or no rw mapping)\n", filename);
+                   "no dinfo loaded %s (no rx or rw mappings (%d) not reached expected count (%d))\n",
+                   filename, di->fsm.rw_map_count, expected_rw_load_count);
       return 0;
    }
 }
@@ -1902,6 +1884,62 @@ void VG_(di_notify_pdb_debuginfo)( Int fd_obj, Addr avma_obj,
 
 #endif /* defined(VGO_linux) || defined(VGO_darwin) || defined(VGO_solaris) || defined(VGO_freebsd) */
 
+#if defined(VGO_darwin) && DARWIN_VERS >= DARWIN_11_00
+// Special version of VG_(di_notify_mmap) specifically to read debug info from the DYLD Shared Cache (DSC)
+// We only use this on macOS 11.0 and later, because Apple stopped shipping dylib on-disk then.
+
+ULong VG_(di_notify_dsc)( const HChar* filename, Addr header, SizeT len )
+{
+   DebugInfo* di;
+   Int rw_load_count;
+   const Bool       debug = VG_(debugLog_getLevel)() >= 3;
+
+   if (debug)
+      VG_(dmsg)("di_notify_dsc-1: %s at %#lx-%#lx\n", filename, header, header+len);
+
+   if (!ML_(check_macho_and_get_rw_loads_from_memory)( (const void*) header, len, &rw_load_count ))
+      return 0;
+
+   /* See if we have a DebugInfo for this filename.  If not,
+      create one. */
+   di = find_or_create_DebugInfo_for( filename );
+   vg_assert(di);
+
+   di->from_memory = True;
+
+   if (di->have_dinfo) {
+      if (debug)
+         VG_(dmsg)("di_notify_dsc-2x: "
+                   "ignoring mapping because we already read debuginfo "
+                   "for DebugInfo* %p\n", di);
+      return 0;
+   }
+
+   if (debug)
+      VG_(dmsg)("di_notify_dsc-2: "
+                "noting details in DebugInfo* at %p\n", di);
+
+   /* Note the details about the mapping. */
+   DebugInfoMapping map;
+   map.avma = header;
+   map.size = len;
+   map.foff = 0;
+   map.rx   = True;
+   map.rw   = False;
+   map.ro   = False;
+   VG_(addToXA)(di->fsm.maps, &map);
+
+   /* Update flags about what kind of mappings we've already seen. */
+   di->fsm.have_rx_map |= True;
+
+   vg_assert(!di->have_dinfo);
+
+   if (debug)
+      VG_(dmsg)("di_notify_dsc-3: "
+                "achieved accept state for %s\n", filename);
+   return di_notify_ACHIEVE_ACCEPT_STATE ( di );
+}
+#endif
 
 /*------------------------------------------------------------*/
 /*---                                                      ---*/
@@ -2397,7 +2435,7 @@ Bool VG_(get_fnname_inl) ( DiEpoch ep, Addr a, const HChar** buf,
          ? & iipc->di->inltab[iipc->next_inltab]
          : NULL;
       vg_assert (next_inl);
-      *buf = next_inl->inlinedfn;
+      *buf = next_inl->inlined.fn;
       return True;
    }
 }
@@ -2487,7 +2525,7 @@ Bool VG_(get_fnname_no_cxx_demangle) ( DiEpoch ep, Addr a, const HChar** buf,
          : NULL;
       vg_assert (next_inl);
       // The function we are in is called by next_inl.
-      *buf = next_inl->inlinedfn;
+      *buf = next_inl->inlined.fn;
       return True;
    }
 }
@@ -2844,12 +2882,12 @@ const HChar* VG_(describe_IP)(DiEpoch ep, Addr eip, const InlIPCursor *iipc)
                     ? VG_(get_fnname_w_offset) (ep, eip, &buf_fn)
                     : VG_(get_fnname) (ep, eip, &buf_fn);
    } else {
-      const DiInlLoc *next_inl = iipc && iipc->next_inltab >= 0
+      const DiInlLoc *next_inl = iipc && iipc->di && iipc->next_inltab >= 0
          ? & iipc->di->inltab[iipc->next_inltab]
          : NULL;
       vg_assert (next_inl);
       // The function we are in is called by next_inl.
-      buf_fn = next_inl->inlinedfn;
+      buf_fn = next_inl->inlined.fn;
       know_fnname = True;
 
       // INLINED????
@@ -3110,12 +3148,12 @@ UWord evalCfiExpr ( const XArray* exprs, Int ix,
             case Creg_IA_SP: return eec->uregs->sp;
             case Creg_IA_BP: return eec->uregs->fp;
             case Creg_MIPS_RA: return eec->uregs->ra;
-#           elif defined(VGA_ppc32) || defined(VGA_ppc64be) \
-               || defined(VGA_ppc64le)
-#           elif defined(VGP_arm64_linux)
+#           elif defined(VGP_arm64_linux) || defined(VGP_arm64_freebsd)
             case Creg_ARM64_SP: return eec->uregs->sp;
             case Creg_ARM64_X30: return eec->uregs->x30;
             case Creg_ARM64_X29: return eec->uregs->x29;
+#           elif defined(VGA_ppc32) || defined(VGA_ppc64be) \
+               || defined(VGA_ppc64le) || defined(VGP_riscv64_linux)
 #           else
 #             error "Unsupported arch"
 #           endif
@@ -3389,6 +3427,20 @@ static Addr compute_cfa ( const D3UnwindRegs* uregs,
       case CFIC_ARM64_X29REL: 
          cfa = cfsi_m->cfa_off + uregs->x29;
          break;
+#     elif defined(VGP_arm64_freebsd)
+   case CFIC_ARM64_SPREL:
+      cfa = cfsi_m->cfa_off + uregs->sp;
+      break;
+   case CFIC_ARM64_X29REL:
+      cfa = cfsi_m->cfa_off + uregs->x29;
+      break;
+#     elif defined(VGP_riscv64_linux)
+      case CFIC_IA_SPREL:
+         cfa = cfsi_m->cfa_off + uregs->sp;
+         break;
+      case CFIC_IA_BPREL:
+         cfa = cfsi_m->cfa_off + uregs->fp;
+         break;
 #     else
 #       error "Unsupported arch"
 #     endif
@@ -3460,6 +3512,15 @@ Addr ML_(get_CFA) ( Addr ip, Addr sp, Addr fp,
      return compute_cfa(&uregs,
                         min_accessible,  max_accessible, ce->di, ce->cfsi_m);
    }
+#elif defined(VGA_riscv64)
+   { D3UnwindRegs uregs;
+     uregs.pc = ip;
+     uregs.sp = sp;
+     uregs.fp = fp;
+     uregs.ra = 0;
+     return compute_cfa(&uregs,
+                        min_accessible,  max_accessible, ce->di, ce->cfsi_m);
+   }
 
 #  else
    return 0; /* indicates failure */
@@ -3511,6 +3572,8 @@ void VG_(ppUnwindInfo) (Addr from, Addr to)
    For arm64, the unwound registers are: X29(FP) X30(LR) SP PC.
 
    For s390, the unwound registers are: R11(FP) R14(LR) R15(SP) F0..F7 PC.
+
+   For riscv64, the unwound registers are: X2(SP) X8(FP) PC
 */
 Bool VG_(use_CF_info) ( /*MOD*/D3UnwindRegs* uregsHere,
                         Addr min_accessible,
@@ -3532,7 +3595,9 @@ Bool VG_(use_CF_info) ( /*MOD*/D3UnwindRegs* uregsHere,
 #  elif defined(VGA_mips32) || defined(VGA_mips64) || defined(VGA_nanomips)
    ipHere = uregsHere->pc;
 #  elif defined(VGA_ppc32) || defined(VGA_ppc64be) || defined(VGA_ppc64le)
-#  elif defined(VGP_arm64_linux)
+#  elif defined(VGA_arm64)
+   ipHere = uregsHere->pc;
+#  elif defined(VGP_riscv64_linux)
    ipHere = uregsHere->pc;
 #  else
 #    error "Unknown arch"
@@ -3568,7 +3633,6 @@ Bool VG_(use_CF_info) ( /*MOD*/D3UnwindRegs* uregsHere,
 #  endif
 
 #  if defined(VGA_s390x)
-   const Bool is_s390x = True;
    const Addr old_S390X_F0 = uregsHere->f0;
    const Addr old_S390X_F1 = uregsHere->f1;
    const Addr old_S390X_F2 = uregsHere->f2;
@@ -3577,16 +3641,9 @@ Bool VG_(use_CF_info) ( /*MOD*/D3UnwindRegs* uregsHere,
    const Addr old_S390X_F5 = uregsHere->f5;
    const Addr old_S390X_F6 = uregsHere->f6;
    const Addr old_S390X_F7 = uregsHere->f7;
+#   define SAVE_TO_PREV(p,reg) do { p = reg; } while (0)
 #  else
-   const Bool is_s390x = False;
-   const Addr old_S390X_F0 = 0;
-   const Addr old_S390X_F1 = 0;
-   const Addr old_S390X_F2 = 0;
-   const Addr old_S390X_F3 = 0;
-   const Addr old_S390X_F4 = 0;
-   const Addr old_S390X_F5 = 0;
-   const Addr old_S390X_F6 = 0;
-   const Addr old_S390X_F7 = 0;
+#   define SAVE_TO_PREV(p,reg) do { vg_assert(0); } while (0)
 #  endif
 
 #  define COMPUTE(_prev, _here, _how, _off)             \
@@ -3618,29 +3675,29 @@ Bool VG_(use_CF_info) ( /*MOD*/D3UnwindRegs* uregsHere,
                if (!ok) return False;                   \
                break;                                   \
             case CFIR_S390X_F0:                               \
-               if (is_s390x) { _prev = old_S390X_F0; break; } \
-               vg_assert(0+0-0);                              \
+               SAVE_TO_PREV(_prev, old_S390X_F0);             \
+               break;                                         \
             case CFIR_S390X_F1:                               \
-               if (is_s390x) { _prev = old_S390X_F1; break; } \
-               vg_assert(0+1-1);                              \
+               SAVE_TO_PREV(_prev, old_S390X_F1);             \
+               break;                                         \
             case CFIR_S390X_F2:                               \
-               if (is_s390x) { _prev = old_S390X_F2; break; } \
-               vg_assert(0+2-2);                              \
+               SAVE_TO_PREV(_prev, old_S390X_F2);             \
+               break;                                         \
             case CFIR_S390X_F3:                               \
-               if (is_s390x) { _prev = old_S390X_F3; break; } \
-               vg_assert(0+3-3);                              \
+               SAVE_TO_PREV(_prev, old_S390X_F3);             \
+               break;                                         \
             case CFIR_S390X_F4:                               \
-               if (is_s390x) { _prev = old_S390X_F4; break; } \
-               vg_assert(0+4-4);                              \
+               SAVE_TO_PREV(_prev, old_S390X_F4);             \
+               break;                                         \
             case CFIR_S390X_F5:                               \
-               if (is_s390x) { _prev = old_S390X_F5; break; } \
-               vg_assert(0+5-5);                              \
+               SAVE_TO_PREV(_prev, old_S390X_F5);             \
+               break;                                         \
             case CFIR_S390X_F6:                               \
-               if (is_s390x) { _prev = old_S390X_F6; break; } \
-               vg_assert(0+6-6);                              \
+               SAVE_TO_PREV(_prev, old_S390X_F6);             \
+               break;                                         \
             case CFIR_S390X_F7:                               \
-               if (is_s390x) { _prev = old_S390X_F7; break; } \
-               vg_assert(0+7-7);                              \
+               SAVE_TO_PREV(_prev, old_S390X_F7);             \
+               break;                                         \
             default:                                    \
                vg_assert(0*0);                          \
          }                                              \
@@ -3674,11 +3731,20 @@ Bool VG_(use_CF_info) ( /*MOD*/D3UnwindRegs* uregsHere,
    COMPUTE(uregsPrev.sp, uregsHere->sp, cfsi_m->sp_how, cfsi_m->sp_off);
    COMPUTE(uregsPrev.fp, uregsHere->fp, cfsi_m->fp_how, cfsi_m->fp_off);
 #  elif defined(VGA_ppc32) || defined(VGA_ppc64be) || defined(VGA_ppc64le)
-#  elif defined(VGP_arm64_linux)
+#  elif defined(VGP_arm64_linux) || defined(VGP_arm64_freebsd)
    COMPUTE(uregsPrev.pc,  uregsHere->pc,  cfsi_m->ra_how,  cfsi_m->ra_off);
    COMPUTE(uregsPrev.sp,  uregsHere->sp,  cfsi_m->sp_how,  cfsi_m->sp_off);
    COMPUTE(uregsPrev.x30, uregsHere->x30, cfsi_m->x30_how, cfsi_m->x30_off);
    COMPUTE(uregsPrev.x29, uregsHere->x29, cfsi_m->x29_how, cfsi_m->x29_off);
+#  elif defined(VGP_riscv64_linux)
+   /* Compute register values in the caller's frame. Notice that the previous
+      pc is equal to the previous ra and is calculated as such. The previous ra
+      is however set to 0 here as this helps to promptly fail cases where an
+      inner frame uses the CFIR_SAME rule for ra which is bogus. */
+   COMPUTE(uregsPrev.pc, uregsHere->ra, cfsi_m->ra_how, cfsi_m->ra_off);
+   COMPUTE(uregsPrev.sp, uregsHere->sp, cfsi_m->sp_how, cfsi_m->sp_off);
+   COMPUTE(uregsPrev.fp, uregsHere->fp, cfsi_m->fp_how, cfsi_m->fp_off);
+   uregsPrev.ra = 0;
 #  else
 #    error "Unknown arch"
 #  endif
@@ -5155,6 +5221,19 @@ void VG_(load_all_debuginfo) (void)
    for (DebugInfo* di = debugInfo_list; di; di = di->next) {
       VG_(di_load_di)(di);
    }
+}
+
+SizeT VG_(data_size)(void)
+{
+   HChar resolved[1000];
+   VG_(realpath)( VG_(args_the_exename), resolved);
+
+   for (DebugInfo* di = debugInfo_list; di; di = di->next) {
+      if (di->data_size  && VG_(strcmp)(di->soname, "NONE") == 0 && VG_(strcmp)(resolved, di->fsm.filename) == 0) {
+         return VG_PGROUNDUP(di->data_size);
+      }
+   }
+   return 0U;
 }
 #endif
 

@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -93,6 +93,7 @@ extern SysRes VG_(mk_SysRes_ppc32_linux) ( UInt  val, UInt  cr0so );
 extern SysRes VG_(mk_SysRes_ppc64_linux) ( ULong val, ULong cr0so, UInt flag );
 extern SysRes VG_(mk_SysRes_x86_freebsd) ( UInt val, UInt val2, Bool err);
 extern SysRes VG_(mk_SysRes_amd64_freebsd)( ULong val, ULong val2, Bool err );
+extern SysRes VG_(mk_SysRes_arm64_freebsd)( ULong val, ULong val2, Bool err );
 extern SysRes VG_(mk_SysRes_arm_linux)   ( Int val );
 extern SysRes VG_(mk_SysRes_arm64_linux) ( Long val );
 extern SysRes VG_(mk_SysRes_x86_darwin)  ( UChar scclass, Bool isErr,
@@ -105,6 +106,7 @@ extern SysRes VG_(mk_SysRes_mips32_linux)( UWord v0, UWord v1,
 extern SysRes VG_(mk_SysRes_mips64_linux)( ULong v0, ULong v1,
                                            ULong a3 );
 extern SysRes VG_(mk_SysRes_nanomips_linux)( UWord a0);
+extern SysRes VG_(mk_SysRes_riscv64_linux) ( Long a0 );
 extern SysRes VG_(mk_SysRes_x86_solaris) ( Bool isErr, UInt val, UInt val2 );
 extern SysRes VG_(mk_SysRes_amd64_solaris) ( Bool isErr, ULong val, ULong val2 );
 extern SysRes VG_(mk_SysRes_Error)       ( UWord val );

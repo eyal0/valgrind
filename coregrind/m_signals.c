@@ -13,7 +13,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -178,7 +178,7 @@
 
        else
        if    thread is blocked in a syscall marked SfMayBlock
-       then  signals may be delivered to async_sighandler, since we
+       then  signals may be delivered to async_signalhandler, since we
              temporarily unblocked them for the duration of the syscall,
              by using the real (SCSS) mask for this thread
 
@@ -549,6 +549,21 @@ VgHashTable *ht_sigchld_ignore = NULL;
         (srP)->r_sp = (uc)->uc_mcontext.rsp;             \
         (srP)->misc.AMD64.r_rbp = (uc)->uc_mcontext.rbp; \
       }
+#elif defined(VGP_arm64_freebsd)
+
+#  define VG_UCONTEXT_INSTR_PTR(uc)       ((UWord)((uc)->uc_mcontext.mc_gpregs.gp_elr))
+#  define VG_UCONTEXT_STACK_PTR(uc)       ((UWord)((uc)->uc_mcontext.mc_gpregs.gp_sp))
+#  define VG_UCONTEXT_SYSCALL_SYSRES(uc)                        \
+      /* Convert the value in uc_mcontext.regs[0] into a SysRes. */ \
+      VG_(mk_SysRes_arm64_freebsd)( (uc)->uc_mcontext.mc_gpregs.gp_x[0], \
+         (uc)->uc_mcontext.mc_gpregs.gp_x[1], \
+         ((uc)->uc_mcontext.mc_gpregs.gp_spsr & VKI_PSR_C) != 0 ? True : False )
+#  define VG_UCONTEXT_TO_UnwindStartRegs(srP, uc)           \
+      { (srP)->r_pc = (uc)->uc_mcontext.mc_gpregs.gp_elr;   \
+        (srP)->r_sp = (uc)->uc_mcontext.mc_gpregs.gp_sp;    \
+        (srP)->misc.ARM64.x29 = (uc)->uc_mcontext.mc_gpregs.gp_x[29]; \
+        (srP)->misc.ARM64.x30 = (uc)->uc_mcontext.mc_gpregs.gp_lr; \
+      }
 
 #elif defined(VGP_s390x_linux)
 
@@ -628,6 +643,19 @@ VgHashTable *ht_sigchld_ignore = NULL;
         (srP)->misc.MIPS32.r28 = (uc)->uc_mcontext.sc_regs[28]; \
       }
 
+#elif defined(VGP_riscv64_linux)
+#  define VG_UCONTEXT_INSTR_PTR(uc)       ((uc)->uc_mcontext.sc_regs.pc)
+#  define VG_UCONTEXT_STACK_PTR(uc)       ((uc)->uc_mcontext.sc_regs.sp)
+#  define VG_UCONTEXT_SYSCALL_SYSRES(uc)                               \
+      /* Convert the value in uc_mcontext.sc_regs.a0 into a SysRes. */ \
+      VG_(mk_SysRes_riscv64_linux)( (uc)->uc_mcontext.sc_regs.a0 )
+#  define VG_UCONTEXT_TO_UnwindStartRegs(srP, uc)                \
+      { (srP)->r_pc = (uc)->uc_mcontext.sc_regs.pc;              \
+        (srP)->r_sp = (uc)->uc_mcontext.sc_regs.sp;              \
+        (srP)->misc.RISCV64.r_fp = (uc)->uc_mcontext.sc_regs.s0; \
+        (srP)->misc.RISCV64.r_ra = (uc)->uc_mcontext.sc_regs.ra; \
+      }
+
 #elif defined(VGP_x86_solaris)
 #  define VG_UCONTEXT_INSTR_PTR(uc)       ((Addr)(uc)->uc_mcontext.gregs[VKI_EIP])
 #  define VG_UCONTEXT_STACK_PTR(uc)       ((Addr)(uc)->uc_mcontext.gregs[VKI_UESP])
@@ -655,6 +683,7 @@ VgHashTable *ht_sigchld_ignore = NULL;
         (srP)->r_sp = (uc)->uc_mcontext.gregs[VKI_REG_RSP];                  \
         (srP)->misc.AMD64.r_rbp = (uc)->uc_mcontext.gregs[VKI_REG_RBP];      \
       }
+
 #else
 #  error Unknown platform
 #endif
@@ -826,7 +855,7 @@ void calculate_SKSS_from_SCSS ( SKSS* dst )
       case VKI_SIGFPE:
       case VKI_SIGILL:
       case VKI_SIGTRAP:
-#if defined(VGO_freebsd)
+#if defined(VKI_SIGSYS)
       case VKI_SIGSYS:
 #endif
 	 /* For these, we always want to catch them and report, even
@@ -899,8 +928,10 @@ void calculate_SKSS_from_SCSS ( SKSS* dst )
       if (skss_handler != VKI_SIG_IGN && skss_handler != VKI_SIG_DFL)
          skss_flags |= VKI_SA_SIGINFO;
 
+#     if !defined(VGP_riscv64_linux)
       /* use our own restorer */
       skss_flags |= VKI_SA_RESTORER;
+#     endif
 
       /* Create SKSS entry for this signal. */
       if (sig != VKI_SIGKILL && sig != VKI_SIGSTOP)
@@ -1010,7 +1041,7 @@ extern void my_sigreturn(void);
    ".text\n" \
    ".globl my_sigreturn\n" \
    "my_sigreturn:\n" \
-   "    movl $" VG_STRINGIFY(__NR_DARWIN_FAKE_SIGRETURN) ",%eax\n" \
+   "    movl $" VG_STRINGIFY(__NR_darwin_fake_sigreturn) ",%eax\n" \
    "    int $0x80\n"
 
 #elif defined(VGP_amd64_darwin)
@@ -1018,7 +1049,7 @@ extern void my_sigreturn(void);
    ".text\n" \
    ".globl my_sigreturn\n" \
    "my_sigreturn:\n" \
-   "    movq $" VG_STRINGIFY(__NR_DARWIN_FAKE_SIGRETURN) ",%rax\n" \
+   "    movq $" VG_STRINGIFY(__NR_darwin_fake_sigreturn) ",%rax\n" \
    "    syscall\n"
 
 #elif defined(VGP_s390x_linux)
@@ -1052,6 +1083,16 @@ extern void my_sigreturn(void);
    "   li $t4, " #name "\n" \
    "   syscall[32]\n" \
    ".previous\n"
+
+#elif defined(VGP_riscv64_linux)
+/* Not used on riscv64. */
+#  define _MY_SIGRETURN(name) \
+   ".text\n" \
+   ".globl my_sigreturn\n" \
+   "my_sigreturn:\n" \
+   "   unimp\n" \
+   ".previous\n"
+
 #elif defined(VGP_x86_solaris) || defined(VGP_amd64_solaris)
 /* Not used on Solaris. */
 #  define _MY_SIGRETURN(name) \
@@ -1068,6 +1109,14 @@ extern void my_sigreturn(void);
     "my_sigreturn:\n" \
     "ud2\n" \
     ".previous\n"
+#elif defined(VGP_arm64_freebsd)
+/* Not used on FreeBSD */
+# define _MY_SIGRETURN(name) \
+".text\n" \
+   ".globl my_sigreturn\n" \
+   "my_sigreturn:\n" \
+   "udf #0\n" \
+   ".previous\n"
 #else
 #  error Unknown platform
 #endif
@@ -1109,9 +1158,10 @@ static void handle_SCSS_change ( Bool force_update )
 
       ksa.ksa_handler = skss.skss_per_sig[sig].skss_handler;
       ksa.sa_flags    = skss.skss_per_sig[sig].skss_flags;
-#     if !defined(VGP_ppc32_linux) && \
+#     if !defined(VGP_ppc32_linux) && !defined(VGP_mips32_linux) && \
+         !defined(VGP_riscv64_linux) && \
          !defined(VGP_x86_darwin) && !defined(VGP_amd64_darwin) && \
-         !defined(VGP_mips32_linux) && !defined(VGO_solaris) && !defined(VGO_freebsd)
+         !defined(VGO_solaris) && !defined(VGO_freebsd)
       ksa.sa_restorer = my_sigreturn;
 #     endif
       /* Re above ifdef (also the assertion below), PaulM says:
@@ -1155,11 +1205,11 @@ static void handle_SCSS_change ( Bool force_update )
 #        endif
          vg_assert(ksa_old.sa_flags 
                    == skss_old.skss_per_sig[sig].skss_flags);
-#        if !defined(VGP_ppc32_linux) && \
+#        if !defined(VGP_ppc32_linux) && !defined(VGP_mips32_linux) && \
+            !defined(VGP_mips64_linux) && !defined(VGP_nanomips_linux) && \
+            !defined(VGP_riscv64_linux) && \
             !defined(VGP_x86_darwin) && !defined(VGP_amd64_darwin) && \
-            !defined(VGP_mips32_linux) && !defined(VGP_mips64_linux) && \
-            !defined(VGP_nanomips_linux) && !defined(VGO_solaris) && \
-            !defined(VGO_freebsd)
+            !defined(VGO_solaris) && !defined(VGO_freebsd)
          vg_assert(ksa_old.sa_restorer == my_sigreturn);
 #        endif
          VG_(sigaddset)( &ksa_old.sa_mask, VKI_SIGKILL );
@@ -1267,10 +1317,8 @@ SysRes VG_(do_sys_sigaction) ( Int signo,
              || new_act->ksa_handler == VKI_SIG_IGN) )
       goto bad_signo_reserved;
 
-   /* Reject attempts to set a handler (or set ignore) for SIGKILL. */
-   if ( (signo == VKI_SIGKILL || signo == VKI_SIGSTOP)
-       && new_act
-       && new_act->ksa_handler != VKI_SIG_DFL)
+   /* Reject any attempt to set the handler for SIGKILL/STOP. */
+   if ( (signo == VKI_SIGKILL || signo == VKI_SIGSTOP) && new_act )
       goto bad_sigkill_or_sigstop;
 
    /* If the client supplied non-NULL old_act, copy the relevant SCSS
@@ -1279,8 +1327,8 @@ SysRes VG_(do_sys_sigaction) ( Int signo,
       old_act->ksa_handler = scss.scss_per_sig[signo].scss_handler;
       old_act->sa_flags    = scss.scss_per_sig[signo].scss_flags;
       old_act->sa_mask     = scss.scss_per_sig[signo].scss_mask;
-#     if !defined(VGO_darwin) && !defined(VGO_freebsd) && \
-         !defined(VGO_solaris)
+#     if !defined(VGP_riscv64_linux) && !defined(VGO_darwin) && \
+         !defined(VGO_freebsd) && !defined(VGO_solaris)
       old_act->sa_restorer = scss.scss_per_sig[signo].scss_restorer;
 #     endif
    }
@@ -1292,8 +1340,8 @@ SysRes VG_(do_sys_sigaction) ( Int signo,
       scss.scss_per_sig[signo].scss_mask     = new_act->sa_mask;
 
       scss.scss_per_sig[signo].scss_restorer = NULL;
-#     if !defined(VGO_darwin) && !defined(VGO_freebsd) && \
-         !defined(VGO_solaris)
+#     if !defined(VGP_riscv64_linux) && !defined(VGO_darwin) && \
+         !defined(VGO_freebsd) && !defined(VGO_solaris)
       scss.scss_per_sig[signo].scss_restorer = new_act->sa_restorer;
 #     endif
 
@@ -1313,13 +1361,13 @@ SysRes VG_(do_sys_sigaction) ( Int signo,
    return VG_(mk_SysRes_Success)( 0 );
 
   bad_signo:
-   if (VG_(showing_core_errors)() && !VG_(clo_xml)) {
+   if (VG_(showing_core_warnings)()) {
       VG_(umsg)("Warning: bad signal number %d in sigaction()\n", signo);
    }
    return VG_(mk_SysRes_Error)( VKI_EINVAL );
 
   bad_signo_reserved:
-   if (VG_(showing_core_errors)() && !VG_(clo_xml)) {
+   if (VG_(showing_core_warnings)()) {
       VG_(umsg)("Warning: ignored attempt to set %s handler in sigaction();\n",
                 VG_(signame)(signo));
       VG_(umsg)("         the %s signal is used internally by Valgrind\n", 
@@ -1328,7 +1376,7 @@ SysRes VG_(do_sys_sigaction) ( Int signo,
    return VG_(mk_SysRes_Error)( VKI_EINVAL );
 
   bad_sigkill_or_sigstop:
-   if (VG_(showing_core_errors)() && !VG_(clo_xml)) {
+   if (VG_(showing_core_warnings)()) {
       VG_(umsg)("Warning: ignored attempt to set %s handler in sigaction();\n",
                 VG_(signame)(signo));
       VG_(umsg)("         the %s signal is uncatchable\n", 
@@ -1652,8 +1700,8 @@ void VG_(kill_self)(Int sigNo)
 
    sa.ksa_handler = VKI_SIG_DFL;
    sa.sa_flags = 0;
-#  if !defined(VGO_darwin) && !defined(VGO_freebsd) && \
-      !defined(VGO_solaris)
+#  if !defined(VGP_riscv64_linux) && !defined(VGO_darwin) && \
+      !defined(VGO_freebsd) && !defined(VGO_solaris)
    sa.sa_restorer = 0;
 #  endif
    VG_(sigemptyset)(&sa.sa_mask);
@@ -1784,6 +1832,9 @@ static void default_action(const vki_siginfo_t *info, ThreadId tid)
       case VKI_SIGPIPE:	/* term */
       case VKI_SIGALRM:	/* term */
       case VKI_SIGTERM:	/* term */
+#     if defined(VKI_SIGSTKFLT)
+      case VKI_SIGSTKFLT:	/* term */
+#     endif
       case VKI_SIGUSR1:	/* term */
       case VKI_SIGUSR2:	/* term */
       case VKI_SIGIO:	/* term */
@@ -2691,6 +2742,7 @@ Bool VG_(extend_stack)(ThreadId tid, Addr addr)
       else
          VG_(umsg)("Cannot map memory to grow the stack for thread #%u "
                    "to %#lx\n", tid, new_stack_base);
+      VG_(message_flush)();
       return False;
    }
 
@@ -2698,7 +2750,7 @@ Bool VG_(extend_stack)(ThreadId tid, Addr addr)
       code know about it. */
    VG_(change_stack)(VG_(clstk_id), new_stack_base, VG_(clstk_end));
 
-   if (VG_(clo_sanity_level) > 2)
+   if (VG_(clo_sanity_level) >= 3)
       VG_(sanity_check_general)(False);
 
    return True;
@@ -2922,9 +2974,11 @@ void sync_signalhandler_from_kernel ( ThreadId tid,
       if (0)
          VG_(kill_self)(sigNo);  /* generate a core dump */
 
-      //if (tid == 0)            /* could happen after everyone has exited */
-      //  tid = VG_(master_tid);
-      vg_assert(tid != 0);
+      /* tid == 0 could happen after everyone has exited, which indicates
+         a bug in the core (cleanup) code.  Don't assert tid must be valid,
+         that will mess up the valgrind core backtrace if it fails, coming
+         from the signal handler. */
+      // vg_assert(tid != 0);
 
       UnwindStartRegs startRegs;
       VG_(memset)(&startRegs, 0, sizeof(startRegs));
@@ -2945,7 +2999,7 @@ void sync_signalhandler ( Int sigNo,
    Bool from_user;
 
    if (0) 
-      VG_(printf)("sync_sighandler(%d, %p, %p)\n", sigNo, info, uc);
+      VG_(printf)("sync_signalhandler(%d, %p, %p)\n", sigNo, info, uc);
 
    vg_assert(info != NULL);
    vg_assert(info->si_signo == sigNo);
@@ -2953,6 +3007,9 @@ void sync_signalhandler ( Int sigNo,
 	     || sigNo == VKI_SIGBUS
 	     || sigNo == VKI_SIGFPE
 	     || sigNo == VKI_SIGILL
+#if defined(VKI_SIGSYS)
+	     || sigNo == VKI_SIGSYS
+#endif
 	     || sigNo == VKI_SIGTRAP);
 
    info->si_code = sanitize_si_code(info->si_code);
@@ -3042,8 +3099,8 @@ void pp_ksigaction ( vki_sigaction_toK_t* sa )
    VG_(printf)("pp_ksigaction: handler %p, flags 0x%x, restorer %p\n", 
                sa->ksa_handler, 
                (UInt)sa->sa_flags, 
-#              if !defined(VGO_darwin) && !defined(VGO_freebsd) && \
-                  !defined(VGO_solaris)
+#              if !defined(VGP_riscv64_linux) && !defined(VGO_darwin) && \
+                  !defined(VGO_freebsd) && !defined(VGO_solaris)
                   sa->sa_restorer
 #              else
                   (void*)0
@@ -3065,8 +3122,8 @@ void VG_(set_default_handler)(Int signo)
 
    sa.ksa_handler = VKI_SIG_DFL;
    sa.sa_flags = 0;
-#  if !defined(VGO_darwin) && !defined(VGO_freebsd) && \
-      !defined(VGO_solaris)
+#  if !defined(VGP_riscv64_linux) && !defined(VGO_darwin) && \
+      !defined(VGO_freebsd) && !defined(VGO_solaris)
    sa.sa_restorer = 0;
 #  endif
    VG_(sigemptyset)(&sa.sa_mask);
@@ -3187,8 +3244,8 @@ void VG_(sigstartup_actions) ( void )
 
 	 tsa.ksa_handler = (void *)sync_signalhandler;
 	 tsa.sa_flags = VKI_SA_SIGINFO;
-#        if !defined(VGO_darwin) && !defined(VGO_freebsd) && \
-            !defined(VGO_solaris)
+#        if !defined(VGP_riscv64_linux) && !defined(VGO_darwin) && \
+            !defined(VGO_freebsd) && !defined(VGO_solaris)
 	 tsa.sa_restorer = 0;
 #        endif
 	 VG_(sigfillset)(&tsa.sa_mask);
@@ -3215,8 +3272,8 @@ void VG_(sigstartup_actions) ( void )
       scss.scss_per_sig[i].scss_mask     = sa.sa_mask;
 
       scss.scss_per_sig[i].scss_restorer = NULL;
-#     if !defined(VGO_darwin) && !defined(VGO_freebsd) && \
-         !defined(VGO_solaris)
+#     if !defined(VGP_riscv64_linux) && !defined(VGO_darwin) && \
+         !defined(VGO_freebsd) && !defined(VGO_solaris)
       scss.scss_per_sig[i].scss_restorer = sa.sa_restorer;
 #     endif
 

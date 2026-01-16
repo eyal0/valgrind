@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -4154,7 +4154,7 @@ static UChar* mkFormVA ( UChar* p, UInt opc1, UInt r1, UInt r2,
 */
 Int emit_PPCInstr ( /*MB_MOD*/Bool* is_profInc,
                     UChar* buf, Int nbuf, const PPCInstr* i, 
-                    Bool mode64, VexEndness endness_host,
+                    Bool mode64, const VexArchInfo* archinfo_host,
                     const void* disp_cp_chain_me_to_slowEP,
                     const void* disp_cp_chain_me_to_fastEP,
                     const void* disp_cp_xindir,
@@ -4167,6 +4167,7 @@ Int emit_PPCInstr ( /*MB_MOD*/Bool* is_profInc,
       vex_printf("asm  ");ppPPCInstr(i, mode64); vex_printf("\n");
    }
 
+   VexEndness endness_host = archinfo_host->endness;
    switch (i->tag) {
 
    case Pin_LI:
@@ -4938,6 +4939,9 @@ Int emit_PPCInstr ( /*MB_MOD*/Bool* is_profInc,
       default:
          goto bad;
       }
+      // PJF Coverity may be right but I'd reather keep the unreachable code
+      // "just in case" that conditions above ever change
+      // coverity[UNREACHABLE:FALSE]
       goto done;
    }
 

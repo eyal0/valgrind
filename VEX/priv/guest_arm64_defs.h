@@ -11,7 +11,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -116,10 +116,21 @@ extern ULong arm64g_calc_crc32cw ( ULong acc, ULong bits );
 extern ULong arm64g_calc_crc32cx ( ULong acc, ULong bits );
 
 /* --- DIRTY HELPERS --- */
+extern ULong arm64g_dirtyhelper_MRS_DCZID_EL0 ( void );
 
 extern ULong arm64g_dirtyhelper_MRS_CNTVCT_EL0 ( void );
 
 extern ULong arm64g_dirtyhelper_MRS_CNTFRQ_EL0 ( void );
+
+extern ULong arm64g_dirtyhelper_MRS_MIDR_EL1 ( void );
+
+extern ULong arm64g_dirtyhelper_MRS_ID_AA64PFR0_EL1 ( void );
+
+extern ULong arm64g_dirtyhelper_MRS_ID_AA64MMFR0_EL1 ( void );
+extern ULong arm64g_dirtyhelper_MRS_ID_AA64MMFR1_EL1 ( void );
+
+extern ULong arm64g_dirtyhelper_MRS_ID_AA64ISAR0_EL1 ( void );
+extern ULong arm64g_dirtyhelper_MRS_ID_AA64ISAR1_EL1 ( void );
 
 extern void  arm64g_dirtyhelper_PMULLQ ( /*OUT*/V128* res,
                                          ULong arg1, ULong arg2 );
@@ -164,6 +175,19 @@ extern
 void arm64g_dirtyhelper_SHA256SU1 ( /*OUT*/V128* res, ULong dHi, ULong dLo,
                                     ULong nHi, ULong nLo,
                                     ULong mHi, ULong mLo );
+extern
+void arm64g_dirtyhelper_SHA512H2 ( /*OUT*/V128* res, ULong dHi, ULong dLo,
+                                   ULong nHi, ULong nLo, ULong mHi, ULong mLo );
+extern
+void arm64g_dirtyhelper_SHA512H ( /*OUT*/V128* res, ULong dHi, ULong dLo,
+                                  ULong nHi, ULong nLo, ULong mHi, ULong mLo );
+extern
+void arm64g_dirtyhelper_SHA512SU0 ( /*OUT*/V128* res, ULong dHi, ULong dLo,
+                                    ULong nHi, ULong nLo );
+extern
+void arm64g_dirtyhelper_SHA512SU1 ( /*OUT*/V128* res, ULong dHi, ULong dLo,
+                                    ULong nHi, ULong nLo,
+                                    ULong mHi, ULong mLo );
 
 
 /*---------------------------------------------------------*/
@@ -180,7 +204,7 @@ void arm64g_dirtyhelper_SHA256SU1 ( /*OUT*/V128* res, ULong dHi, ULong dLo,
 //ZZ 
 //ZZ #define ARMG_CC_MASK_N    (1 << ARMG_CC_SHIFT_N)
 //ZZ #define ARMG_CC_MASK_Z    (1 << ARMG_CC_SHIFT_Z)
-//ZZ #define ARMG_CC_MASK_C    (1 << ARMG_CC_SHIFT_C)
+#define ARM64G_CC_MASK_C    (1 << ARM64G_CC_SHIFT_C)
 //ZZ #define ARMG_CC_MASK_V    (1 << ARMG_CC_SHIFT_V)
 //ZZ #define ARMG_CC_MASK_Q    (1 << ARMG_CC_SHIFT_Q)
 

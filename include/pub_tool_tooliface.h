@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -270,7 +270,7 @@ extern void VG_(needs_cxx_freeres) ( void );
    - invalid file descriptors to syscalls like read() and write()
    - bad signal numbers passed to sigaction()
    - attempt to install signal handler for SIGKILL or SIGSTOP */
-extern void VG_(needs_core_errors) ( void );
+extern void VG_(needs_core_errors) ( Bool need );
 
 /* Booleans that indicate extra operations are defined;  if these are True,
    the corresponding template functions (given below) must be defined.  A

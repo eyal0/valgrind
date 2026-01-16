@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -42,6 +42,7 @@
 #include "host_generic_simd64.h"
 #include "host_generic_simd128.h"
 #include "host_generic_simd256.h"
+#include "host_amd64_maddf.h"
 #include "host_generic_maddf.h"
 #include "host_amd64_defs.h"
 
@@ -1627,14 +1628,19 @@ static HReg iselIntExpr_R_wrk ( ISelEnv* env, const IRExpr* e )
             addInstr(env, AMD64Instr_Sh64(Ash_SAR, 63, dst));
             return dst;
          }
-         case Iop_Ctz64: {
+         case Iop_CtzNat64: {
             /* Count trailing zeroes, implemented by amd64 'bsfq' */
             HReg dst = newVRegI(env);
             HReg src = iselIntExpr_R(env, e->Iex.Unop.arg);
             addInstr(env, AMD64Instr_Bsfr64(True,src,dst));
+            /* Patch the result in case there was a 0 operand. */
+            IRExpr *cond = unop(Iop_CmpNEZ64, e->Iex.Unop.arg);
+            AMD64CondCode cc = iselCondCode_C(env, cond);
+            HReg ifz = iselIntExpr_R(env, IRExpr_Const(IRConst_U64(64)));
+            addInstr(env, AMD64Instr_CMov64(cc ^ 1, ifz, dst));
             return dst;
          }
-         case Iop_Clz64: {
+         case Iop_ClzNat64: {
             /* Count leading zeroes.  Do 'bsrq' to establish the index
                of the highest set bit, and subtract that value from
                63. */
@@ -1646,6 +1652,11 @@ static HReg iselIntExpr_R_wrk ( ISelEnv* env, const IRExpr* e )
                                             AMD64RMI_Imm(63), dst));
             addInstr(env, AMD64Instr_Alu64R(Aalu_SUB,
                                             AMD64RMI_Reg(tmp), dst));
+            /* Patch the result in case there was a 0 operand. */
+            IRExpr *cond = unop(Iop_CmpNEZ64, e->Iex.Unop.arg);
+            AMD64CondCode cc = iselCondCode_C(env, cond);
+            HReg ifz = iselIntExpr_R(env, IRExpr_Const(IRConst_U64(64)));
+            addInstr(env, AMD64Instr_CMov64(cc ^ 1, ifz, dst));
             return dst;
          }
 
@@ -2832,6 +2843,13 @@ static HReg iselFltExpr_wrk ( ISelEnv* env, const IRExpr* e )
       HReg argX = iselFltExpr(env, qop->arg2);
       HReg argY = iselFltExpr(env, qop->arg3);
       HReg argZ = iselFltExpr(env, qop->arg4);
+      if (env->hwcaps & VEX_HWCAPS_AMD64_FMA3) {
+         vassert(dst.u32 != argY.u32 && dst.u32 != argZ.u32);
+         if (dst.u32 != argX.u32)
+            addInstr(env, AMD64Instr_SseReRg(Asse_MOV, argX, dst));
+         addInstr(env, AMD64Instr_Avx32FLo(Asse_VFMADD213, argY, argZ, dst));
+         return dst;
+      }
       /* XXXROUNDINGFIXME */
       /* set roundingmode here */
       /* subq $16, %rsp         -- make a space*/
@@ -2861,10 +2879,22 @@ static HReg iselFltExpr_wrk ( ISelEnv* env, const IRExpr* e )
                                        AMD64AMode_IR(0, hregAMD64_RDX())));
       addInstr(env, AMD64Instr_SseLdSt(False/*!isLoad*/, 4, argZ,
                                        AMD64AMode_IR(0, hregAMD64_RCX())));
-      /* call the helper */
-      addInstr(env, AMD64Instr_Call( Acc_ALWAYS,
-                                     (ULong)(HWord)h_generic_calc_MAddF32,
-                                     4, mk_RetLoc_simple(RLPri_None) ));
+
+      /* call the helper with priority order : fma4 -> fallback generic
+         remark: the fma3 case is handled before without helper*/
+#if defined(VGA_amd64)
+      if (env->hwcaps & VEX_HWCAPS_AMD64_FMA4) {
+         addInstr(env, AMD64Instr_Call( Acc_ALWAYS,
+                                        (ULong)(HWord)h_amd64_calc_MAddF32_fma4,
+                                        4, mk_RetLoc_simple(RLPri_None) ));
+      }else
+#endif
+      {
+         addInstr(env, AMD64Instr_Call( Acc_ALWAYS,
+                                        (ULong)(HWord)h_generic_calc_MAddF32,
+                                        4, mk_RetLoc_simple(RLPri_None) ));
+      }
+
       /* fetch the result from memory, using %r_argp, which the
          register allocator will keep alive across the call. */
       addInstr(env, AMD64Instr_SseLdSt(True/*isLoad*/, 4, dst,
@@ -3024,6 +3054,14 @@ static HReg iselDblExpr_wrk ( ISelEnv* env, const IRExpr* e )
       HReg argX = iselDblExpr(env, qop->arg2);
       HReg argY = iselDblExpr(env, qop->arg3);
       HReg argZ = iselDblExpr(env, qop->arg4);
+      if (env->hwcaps & VEX_HWCAPS_AMD64_FMA3) {
+         vassert(dst.u32 != argY.u32 && dst.u32 != argZ.u32);
+         if (dst.u32 != argX.u32)
+            addInstr(env, AMD64Instr_SseReRg(Asse_MOV, argX, dst));
+         addInstr(env, AMD64Instr_Avx64FLo(Asse_VFMADD213, argY, argZ, dst));
+         return dst;
+      }
+
       /* XXXROUNDINGFIXME */
       /* set roundingmode here */
       /* subq $32, %rsp         -- make a space*/
@@ -3053,10 +3091,22 @@ static HReg iselDblExpr_wrk ( ISelEnv* env, const IRExpr* e )
                                        AMD64AMode_IR(0, hregAMD64_RDX())));
       addInstr(env, AMD64Instr_SseLdSt(False/*!isLoad*/, 8, argZ,
                                        AMD64AMode_IR(0, hregAMD64_RCX())));
-      /* call the helper */
-      addInstr(env, AMD64Instr_Call( Acc_ALWAYS,
-                                     (ULong)(HWord)h_generic_calc_MAddF64,
-                                     4, mk_RetLoc_simple(RLPri_None) ));
+
+      /* call the helper with priority order : fma4 -> fallback generic
+         remark: the fma3 case is handled before without helper*/
+#if defined(VGA_amd64)
+      if (env->hwcaps & VEX_HWCAPS_AMD64_FMA4) {
+         addInstr(env, AMD64Instr_Call( Acc_ALWAYS,
+                                        (ULong)(HWord)h_amd64_calc_MAddF64_fma4,
+                                        4, mk_RetLoc_simple(RLPri_None) ));
+      }else
+#endif
+      {
+         addInstr(env, AMD64Instr_Call( Acc_ALWAYS,
+                                        (ULong)(HWord)h_generic_calc_MAddF64,
+                                        4, mk_RetLoc_simple(RLPri_None) ));
+      }
+
       /* fetch the result from memory, using %r_argp, which the
          register allocator will keep alive across the call. */
       addInstr(env, AMD64Instr_SseLdSt(True/*isLoad*/, 8, dst,
@@ -5355,7 +5405,7 @@ HInstrArray* iselSB_AMD64 ( const IRSB* bb,
 {
    Int        i, j;
    HReg       hreg, hregHI;
-   ISelEnv*   env;
+   ISelEnv    *env, envmem;
    UInt       hwcaps_host = archinfo_host->hwcaps;
    AMD64AMode *amCounter, *amFailAddr;
 
@@ -5372,13 +5422,15 @@ HInstrArray* iselSB_AMD64 ( const IRSB* bb,
                      | VEX_HWCAPS_AMD64_AVX2
                      | VEX_HWCAPS_AMD64_F16C
                      | VEX_HWCAPS_AMD64_RDRAND
-                     | VEX_HWCAPS_AMD64_RDSEED)));
+                     | VEX_HWCAPS_AMD64_RDSEED
+                     | VEX_HWCAPS_AMD64_FMA3
+                     | VEX_HWCAPS_AMD64_FMA4)));
 
    /* Check that the host's endianness is as expected. */
    vassert(archinfo_host->endness == VexEndnessLE);
 
    /* Make up an initial environment to use. */
-   env = LibVEX_Alloc_inline(sizeof(ISelEnv));
+   env = &envmem;
    env->vreg_ctr = 0;
 
    /* Set up output code array. */

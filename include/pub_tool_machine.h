@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -65,7 +65,7 @@
 #  define VG_CLREQ_SZB             20
 #  define VG_STACK_REDZONE_SZB      0
 
-#elif defined(VGP_arm64_linux)
+#elif defined(VGP_arm64_linux) || defined(VGP_arm64_freebsd)
 #  define VG_MIN_INSTR_SZB          4
 #  define VG_MAX_INSTR_SZB          4 
 #  define VG_CLREQ_SZB             20
@@ -105,6 +105,12 @@
 #elif defined(VGP_nanomips_linux)
 #  define VG_MIN_INSTR_SZB          2
 #  define VG_MAX_INSTR_SZB          6
+#  define VG_CLREQ_SZB             20
+#  define VG_STACK_REDZONE_SZB      0
+
+#elif defined(VGP_riscv64_linux)
+#  define VG_MIN_INSTR_SZB          2
+#  define VG_MAX_INSTR_SZB          4
 #  define VG_CLREQ_SZB             20
 #  define VG_STACK_REDZONE_SZB      0
 

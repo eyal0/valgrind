@@ -15,7 +15,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -64,7 +64,6 @@ static void load_client ( /*OUT*/ExeInfo* info,
 {
    const HChar* exe_name;
    Int    ret;
-   SysRes res;
 
    vg_assert( VG_(args_the_exename) != NULL);
    exe_name = VG_(find_executable)( VG_(args_the_exename) );
@@ -82,13 +81,6 @@ static void load_client ( /*OUT*/ExeInfo* info,
    }
 
    // The client was successfully loaded!  Continue.
-
-   /* Get hold of a file descriptor which refers to the client
-      executable.  This is needed for attaching to GDB. */
-   res = VG_(open)(exe_name, VKI_O_RDONLY, VKI_S_IRUSR);
-   if (!sr_isError(res)) {
-      VG_(cl_exec_fd) = sr_Res(res);
-   }
 
    /* Copy necessary bits of 'info' that were filled in */
    *client_ip  = info->init_ip;
@@ -145,7 +137,7 @@ static HChar** setup_client_env ( HChar** origenv, const HChar* toolname)
       paths.  We might not need the space for vgpreload_<tool>.so, but it
       doesn't hurt to over-allocate briefly.  The 16s are just cautious
       slop. */
-   Int preload_core_path_len = vglib_len + sizeof(preload_core)
+   Int preload_core_path_len = vglib_len + VG_(strlen)(preload_core)
                                + sizeof(VG_PLATFORM) + 16;
    Int preload_tool_path_len = vglib_len + VG_(strlen)(toolname)
                                + sizeof(VG_PLATFORM) + 16;
@@ -325,6 +317,23 @@ static HChar *copy_bytes(HChar **tab, const HChar *src, SizeT size)
    return orig;
 }
 
+static const struct auxv *find_auxv(const UWord* sp)
+{
+   sp++;                // skip argc (Nb: is word-sized, not int-sized!)
+
+   while (*sp != 0) {   // skip argv
+      sp++;
+   }
+   sp++;
+
+   while (*sp != 0) {   // skip env
+      sp++;
+   }
+   sp++;
+
+   return (const struct auxv *)sp;
+}
+
 /* ----------------------------------------------------------------
 
    This sets up the client's initial stack, containing the args,
@@ -350,7 +359,7 @@ static HChar *copy_bytes(HChar **tab, const HChar *src, SizeT size)
                   | argv            |
                   +-----------------+
                   | argc            |
-   lower address  +-----------------+ <- sp
+   lower address  +-----------------+ <- client_SP (return value)
                   | undefined       |
                   :                 :
 
@@ -360,27 +369,26 @@ static HChar *copy_bytes(HChar **tab, const HChar *src, SizeT size)
 
    The client's auxv is created by copying and modifying our own one.
 
+   init_sp: used to find the auxv passed by the OS to V
+   some of it will be used to generate the client auxv
+
+   new_client_envp: this is a copy of the original client envp
+   with LD_PRELOADs added and VALGRIND_LAUNCHER removed
+
+   info: structure containing about the memory mappings of the
+   exe (text and stack)
+
+   client_auxv: (output) the auxv created here
+
+   clstack_end: the value returned by VG_(am_startup), which is
+   128G
+
+   clstack_max_size: the max of sysctlkern.maxssiz and VG_(clo_main_stacksize)
+   aspacem_maxAddr
+
    ---------------------------------------------------------------- */
-
-static struct auxv *find_auxv(UWord* sp)
-{
-   sp++;                // skip argc (Nb: is word-sized, not int-sized!)
-
-   while (*sp != 0) {   // skip argv
-      sp++;
-   }
-   sp++;
-
-   while (*sp != 0) {   // skip env
-      sp++;
-   }
-   sp++;
-
-   return (struct auxv *)sp;
-}
-
-static Addr setup_client_stack(void*  init_sp,
-                               HChar** orig_envp,
+static Addr setup_client_stack(const void*  init_sp,
+                               HChar** new_client_envp,
                                const ExeInfo* info,
                                UInt** client_auxv,
                                Addr   clstack_end,
@@ -388,27 +396,30 @@ static Addr setup_client_stack(void*  init_sp,
 {
    SysRes res;
    HChar **cpp;
-   HChar *strtab;    /* string table */
+   HChar *strtab;            /* string table */
    HChar *stringbase;
    Addr *ptr;
    struct auxv *auxv;
    const struct auxv *orig_auxv;
    const struct auxv *cauxv;
-   unsigned stringsize;    /* total size of strings in bytes */
-   unsigned auxsize;    /* total size of auxv in bytes */
-   Int argc;         /* total argc */
-   Int envc;         /* total number of env vars */
-   unsigned stacksize;     /* total client stack size */
+   unsigned stringsize;      /* total size of strings in bytes */
+   unsigned auxsize;         /* total size of auxv in bytes */
+   Int argc;                 /* total argc */
+   Int envc;                 /* total number of env vars */
+   unsigned used_stacksize;  /* total used client stack size */
    Addr client_SP;           /* client stack base (initial SP) */
-   Addr clstack_start;
+   Addr clstack_start;       /* client_SP rounded down to nearest page */
    Int i;
-   Bool have_exename;
    Word client_argv;
 
    vg_assert(VG_IS_PAGE_ALIGNED(clstack_end+1));
    vg_assert( VG_(args_for_client) );
 
    const HChar *exe_name = VG_(find_executable)(VG_(args_the_exename));
+   HChar interp_name[VKI_PATH_MAX];
+   if (VG_(try_get_interp)(exe_name, interp_name, VKI_PATH_MAX)) {
+      exe_name = interp_name;
+   }
    HChar resolved_name[VKI_PATH_MAX];
    VG_(realpath)(exe_name, resolved_name);
 
@@ -419,7 +430,6 @@ static Addr setup_client_stack(void*  init_sp,
 
    /* first of all, work out how big the client stack will be */
    stringsize   = 0;
-   have_exename = VG_(args_the_exename) != NULL;
 
    /* paste on the extra args if the loader needs them (ie, the #!
       interpreter and its argument) */
@@ -434,9 +444,7 @@ static Addr setup_client_stack(void*  init_sp,
    }
 
    /* now scan the args we're given... */
-   if (have_exename) {
-      stringsize += VG_(strlen)( VG_(args_the_exename) ) + 1;
-   }
+   stringsize += VG_(strlen)( VG_(args_the_exename) ) + 1;
 
    for (i = 0; i < VG_(sizeXA)( VG_(args_for_client) ); i++) {
       argc++;
@@ -447,7 +455,7 @@ static Addr setup_client_stack(void*  init_sp,
 
    /* ...and the environment */
    envc = 0;
-   for (cpp = orig_envp; cpp && *cpp; cpp++) {
+   for (cpp = new_client_envp; cpp && *cpp; cpp++) {
       envc++;
       stringsize += VG_(strlen)(*cpp) + 1;
    }
@@ -465,38 +473,33 @@ static Addr setup_client_stack(void*  init_sp,
          break;
       case VKI_AT_CANARYLEN:
          canarylen = cauxv->u.a_val;
-         /*VG_ROUNDUP(stringsize, sizeof(Word));*/
          stringsize += canarylen;
          break;
       case VKI_AT_PAGESIZESLEN:
          pagesizeslen = cauxv->u.a_val;
-         /*VG_ROUNDUP(stringsize, sizeof(Word));*/
          stringsize += pagesizeslen;
          break;
 #if 0
       case VKI_AT_TIMEKEEP:
-         /*VG_ROUNDUP(stringsize, sizeof(Word));*/
          stringsize += sizeof(struct vki_vdso_timehands);
          break;
 #endif
-#if (FREEBSD_VERS >= FREEBSD_13_0)
+      // from FreeBSD 13
       case VKI_AT_PS_STRINGS:
          stringsize += sizeof(struct vki_ps_strings);
          break;
-#endif
-#if (FREEBSD_VERS >= FREEBSD_13_1)
+      // from FreeBSD 13.1
       // case AT_FXRNG:
       // case AT_KPRELOAD:
-#endif
       default:
          break;
       }
    }
 
    /* OK, now we know how big the client stack is */
-   stacksize =
+   used_stacksize =
       sizeof(Word) +                          /* argc */
-      (have_exename ? sizeof(HChar **) : 0) +  /* argc[0] == exename */
+      sizeof(HChar **) +                      /* argc[0] == exename */
       sizeof(HChar **)*argc +                 /* argv */
       sizeof(HChar **) +                      /* terminal NULL */
       sizeof(HChar **)*envc +                 /* envp */
@@ -505,15 +508,15 @@ static Addr setup_client_stack(void*  init_sp,
       VG_ROUNDUP(stringsize, sizeof(Word));   /* strings (aligned) */
 
    if (0) {
-      VG_(printf)("stacksize = %u\n", stacksize);
+      VG_(printf)("stacksize = %u\n", used_stacksize);
    }
 
    /* client_SP is the client's stack pointer */
-   client_SP = clstack_end - stacksize;
+   client_SP = clstack_end - used_stacksize;
    client_SP = VG_ROUNDDN(client_SP, 16); /* make stack 16 byte aligned */
 
    /* base of the string table (aligned) */
-   stringbase = strtab = (HChar *)clstack_end
+   stringbase = strtab = (HChar *)clstack_end + 1
                          - VG_ROUNDUP(stringsize, sizeof(int));
 
    clstack_start = VG_PGROUNDDN(client_SP);
@@ -525,13 +528,31 @@ static Addr setup_client_stack(void*  init_sp,
       VG_(printf)("stringsize=%u auxsize=%u stacksize=%u maxsize=0x%lx\n"
                   "clstack_start %p\n"
                   "clstack_end   %p\n",
-                  stringsize, auxsize, stacksize, clstack_max_size,
+                  stringsize, auxsize, used_stacksize, clstack_max_size,
                   (void*)clstack_start, (void*)clstack_end);
    }
 
    /* ==================== allocate space ==================== */
 
+   /*
+   higher address +-----------------+ <- clstack_end    ^                ^
+                  | args env auxv   |                   |                |
+                  |   see above     |                   |                |
+    ower address  +-----------------+ <- client_SP   anon_size           |
+                  |  round to page  |                   |                |
+                  +-----------------+ <- clstack_start  |                |
+                  |    one page     |                   |           clstack_max_size
+                  +-----------------+ <- anon_start     v                |
+                  :                 :                   ^                |
+                  :      RSVN       :                resvn_size          |
+                  :                 :                   |                |
+                  +-----------------+ <- resvn_start    v                v
+
+   */
+
    {
+      // see comment in VG_(am_startup) about getting the maxssiz from
+      // the OS, not currently feasible with x86 on amd64
       SizeT anon_size   = clstack_end - clstack_start + 1;
       SizeT resvn_size  = clstack_max_size - anon_size;
       Addr  anon_start  = clstack_start;
@@ -568,7 +589,7 @@ static Addr setup_client_stack(void*  init_sp,
 #    endif
 
       if (0) {
-         VG_(printf)("%#lx 0x%lx  %#lx 0x%lx\n",
+         VG_(printf)("resvn_start %#lx resvn_size 0x%lx  anon_start %#lx anon_size 0x%lx\n",
                      resvn_start, resvn_size, anon_start, anon_size);
       }
 
@@ -586,7 +607,7 @@ static Addr setup_client_stack(void*  init_sp,
          res = VG_(am_mmap_anon_fixed_client)(
                   anon_start -inner_HACK,
                   anon_size +inner_HACK,
-                  VKI_PROT_READ|VKI_PROT_WRITE|VKI_PROT_EXEC
+                  info->stack_prot
                );
       }
       if ((!ok) || sr_isError(res)) {
@@ -613,7 +634,7 @@ static Addr setup_client_stack(void*  init_sp,
    ptr = (Addr*)client_SP;
 
    /* --- client argc --- */
-   *ptr++ = argc + (have_exename ? 1 : 0);
+   *ptr++ = argc + 1;
 
    /* --- client argv --- */
    client_argv = (Word)ptr;
@@ -624,9 +645,7 @@ static Addr setup_client_stack(void*  init_sp,
       *ptr++ = (Addr)copy_str(&strtab, info->interp_args);
    }
 
-   if (have_exename) {
-      *ptr++ = (Addr)copy_str(&strtab, VG_(args_the_exename));
-   }
+   *ptr++ = (Addr)copy_str(&strtab, VG_(args_the_exename));
 
    for (i = 0; i < VG_(sizeXA)( VG_(args_for_client) ); i++) {
       *ptr++ = (Addr)copy_str(
@@ -638,7 +657,7 @@ static Addr setup_client_stack(void*  init_sp,
 
    /* --- envp --- */
    VG_(client_envp) = (HChar **)ptr;
-   for (cpp = orig_envp; cpp && *cpp; ptr++, cpp++) {
+   for (cpp = new_client_envp; cpp && *cpp; ptr++, cpp++) {
       *ptr = (Addr)copy_str(&strtab, *cpp);
    }
    *ptr++ = 0;
@@ -677,14 +696,35 @@ static Addr setup_client_stack(void*  init_sp,
       case VKI_AT_OSRELDATE:
       case VKI_AT_PAGESIZESLEN:
       case VKI_AT_CANARYLEN:
-
-#if (FREEBSD_VERS >= FREEBSD_11)
-      // FreeBSD 11+ also have HWCAP and HWCAP2
       case VKI_AT_EHDRFLAGS:
-#endif
          /* All these are pointerless, so we don't need to do
             anything about them. */
          break;
+#if defined(VGP_arm64_freebsd)
+      // FreeBSD 11+ also have HWCAP and HWCAP2
+      // but they aren't used on amd64
+      // FreeBSD 15 adds HWCAP3 and HWCAP4
+      case VKI_AT_HWCAP:
+#define ARM64_SUPPORTED_HWCAP (VKI_HWCAP_ATOMICS        \
+                               | VKI_HWCAP_AES          \
+                               | VKI_HWCAP_PMULL        \
+                               | VKI_HWCAP_SHA1         \
+                               | VKI_HWCAP_SHA2         \
+                               | VKI_HWCAP_SHA512       \
+                               | VKI_HWCAP_CRC32        \
+                               | VKI_HWCAP_ASIMDRDM     \
+                               | VKI_HWCAP_FP           \
+                               | VKI_HWCAP_ASIMD        \
+                               | VKI_HWCAP_ASIMDDP)
+               auxv->u.a_val &= ARM64_SUPPORTED_HWCAP;
+         break;
+#undef ARM64_SUPPORTED_HWCAP
+      // not yet
+      /*
+      case VKI_AT_HWCAP2:
+         break;
+      */
+#endif
 
       case VKI_AT_EXECPATH:
          auxv->u.a_ptr = copy_str(&strtab, resolved_name);
@@ -713,7 +753,7 @@ static Addr setup_client_stack(void*  init_sp,
          break;
 #endif
 
-#if (FREEBSD_VERS >= FREEBSD_13_0)
+      // From FreeBSD 13.0
       /* @todo PJF BSDFLAGS causes serveral testcases to crash.
          Not sure why, it seems to be used for sigfastblock */
       // case AT_BSDFLAGS:
@@ -731,25 +771,37 @@ static Addr setup_client_stack(void*  init_sp,
       case VKI_AT_ENVV:
          auxv->u.a_val = (Word)VG_(client_envp);
          break;
-#endif
 
-#if (FREEBSD_VERS >= FREEBSD_13_1)
+      // from FreeBSD 13.1
       // I think that this is a pointer to a "fenestrasX" structture
       // lots of stuff that I don't understand
       // arc4random, passing through VDSO page ...
       // case AT_FXRNG:
       // Again a pointer, to the VDSO base for use by rtld
       // case AT_KPRELOAD:
-#endif
 
-#if (FREEBSD_VERS >= FREEBSD_13_2)
+      // from FreeBSD 13.2
       case VKI_AT_USRSTACKBASE:
+         VG_(debugLog)(2, "initimg",
+                       "usrstackbase from OS %lx\n",
+                       (UWord)auxv->u.a_val);
          auxv->u.a_val = VG_(get_usrstack)();
+         VG_(debugLog)(2, "initimg",
+                       "usrstackbase from aspacemgr %lx\n",
+                       (UWord)auxv->u.a_val);
          break;
       case VKI_AT_USRSTACKLIM:
+         VG_(debugLog)(2, "initimg",
+                       "usrstacklim from OS %lu (%lx)\n",
+                       (UWord)auxv->u.a_val,
+                       (UWord)auxv->u.a_val);
          auxv->u.a_val = clstack_max_size;
+         VG_(debugLog)(2, "initimg",
+                       "usrstacklim from aspacemgr %lu (%lx)\n",
+                       clstack_max_size,
+                       clstack_max_size);
+
          break;
-#endif
 
       case VKI_AT_PHDR:
          if (info->phdr == 0) {
@@ -788,6 +840,8 @@ static Addr setup_client_stack(void*  init_sp,
    vg_assert(auxv->a_type == VKI_AT_NULL);
 
    vg_assert((strtab-stringbase) == stringsize);
+
+   vg_assert((HChar*)auxv < stringbase);
 
    /* client_SP is pointing at client's argc/argv */
 
@@ -1049,6 +1103,27 @@ void VG_(ii_finalise_image)( IIFinaliseImageInfo iifii )
    arch->vex.guest_RSP = ((iifii.initial_client_SP - 8) & ~0xFUL) + 8;
    arch->vex.guest_RDI = iifii.initial_client_SP;
    arch->vex.guest_RIP = iifii.initial_client_IP;
+
+#elif defined(VGP_arm64_freebsd)
+
+   vg_assert(0 == sizeof(VexGuestARM64State) % 16);
+
+   /* Zero out the initial state, and set up the simulated FPU in a
+      sane way. */
+   LibVEX_GuestARM64_initialise(&arch->vex);
+
+   /* Zero out the shadow areas. */
+   VG_(memset)(&arch->vex_shadow1, 0, sizeof(VexGuestARM64State));
+   VG_(memset)(&arch->vex_shadow2, 0, sizeof(VexGuestARM64State));
+
+   /* Put essential stuff into the new state. */
+   //arch->vex.guest_XSP = ((iifii.initial_client_SP - 8) & ~0xFUL) + 8;
+   arch->vex.guest_XSP = iifii.initial_client_SP;
+   arch->vex.guest_X0 = iifii.initial_client_SP;
+   if (iifii.initial_client_SP % 16) {
+      arch->vex.guest_X0 += 8;
+   }
+   arch->vex.guest_PC = iifii.initial_client_IP;
 
 #  else
 #    error Unknown platform

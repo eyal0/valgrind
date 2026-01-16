@@ -1,0 +1,2 @@
+prog: /bin/true
+post: ./emwarn-gen.pl --dfp-XiC

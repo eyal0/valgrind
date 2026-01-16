@@ -13,7 +13,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -43,6 +43,7 @@
 #include "pub_core_mallocfree.h"
 #include "pub_core_machine.h"
 #include "pub_core_ume.h"
+#include "pub_core_mach.h"
 #include "pub_core_options.h"
 #include "pub_core_tooliface.h"       /* VG_TRACK */
 #include "pub_core_threadstate.h"     /* ThreadArchState */
@@ -61,9 +62,9 @@ static void load_client ( /*OUT*/ExeInfo* info,
 {
    const HChar* exe_name;
    Int    ret;
-   SysRes res;
 
    vg_assert( VG_(args_the_exename) != NULL);
+   vg_assert( VG_(strlen)(VG_(args_the_exename)) >= 1 );
    exe_name = VG_(find_executable)( VG_(args_the_exename) );
 
    if (!exe_name) {
@@ -75,12 +76,6 @@ static void load_client ( /*OUT*/ExeInfo* info,
    ret = VG_(do_exec)(exe_name, info);
 
    // The client was successfully loaded!  Continue.
-
-   /* Get hold of a file descriptor which refers to the client
-      executable.  This is needed for attaching to GDB. */
-   res = VG_(open)(exe_name, VKI_O_RDONLY, VKI_S_IRUSR);
-   if (!sr_isError(res))
-      VG_(cl_exec_fd) = sr_Res(res);
 
    /* Copy necessary bits of 'info' that were filled in */
    *client_ip  = info->init_ip;
@@ -103,8 +98,13 @@ static void load_client ( /*OUT*/ExeInfo* info,
    Also, remove any binding for VALGRIND_LAUNCHER=.  The client should
    not be able to see this.
 
+   Before macOS 11:
    Also, add DYLD_SHARED_REGION=avoid, because V doesn't know how 
    to process the dyld shared cache file.
+
+   Since macOS 11:
+   Use DYLD_SHARED_REGION=use because system libraries aren't provided outside the cache anymore.
+   This means we need to start processing the dyld shared cache file.
 
    Also, change VYLD_* (mangled by launcher) back to DYLD_*.
 
@@ -116,7 +116,11 @@ static HChar** setup_client_env ( HChar** origenv, const HChar* toolname)
    const HChar* preload_core    = "vgpreload_core";
    const HChar* ld_preload      = "DYLD_INSERT_LIBRARIES=";
    const HChar* dyld_cache      = "DYLD_SHARED_REGION=";
+#if DARWIN_VERS >= DARWIN_11_00
+   const HChar* dyld_cache_value= "use";
+#else
    const HChar* dyld_cache_value= "avoid";
+#endif
    const HChar* v_launcher      = VALGRIND_LAUNCHER "=";
    Int    ld_preload_len  = VG_(strlen)( ld_preload );
    Int    dyld_cache_len  = VG_(strlen)( dyld_cache );
@@ -134,7 +138,7 @@ static HChar** setup_client_env ( HChar** origenv, const HChar* toolname)
       paths.  We might not need the space for vgpreload_<tool>.so, but it
       doesn't hurt to over-allocate briefly.  The 16s are just cautious
       slop. */
-   Int preload_core_path_len = vglib_len + sizeof(preload_core) 
+   Int preload_core_path_len = vglib_len + VG_(strlen)(preload_core)
                                          + sizeof(VG_PLATFORM) + 16;
    Int preload_tool_path_len = vglib_len + VG_(strlen)(toolname) 
                                          + sizeof(VG_PLATFORM) + 16;
@@ -165,7 +169,11 @@ static HChar** setup_client_env ( HChar** origenv, const HChar* toolname)
 
    /* Allocate a new space */
    ret = VG_(malloc) ("initimg-darwin.sce.3", 
+#if DARWIN_VERS >= DARWIN_10_15
+                      sizeof(HChar *) * (envc+3+1)); /* 3 new entries + NULL */
+#else
                       sizeof(HChar *) * (envc+2+1)); /* 2 new entries + NULL */
+#endif
 
    /* copy it over */
    for (cpp = ret; *origenv; )
@@ -195,7 +203,7 @@ static HChar** setup_client_env ( HChar** origenv, const HChar* toolname)
 
          *cpp = cp;
 
-         ld_preload_done = True;
+         dyld_cache_done = True;
       }
    }
 
@@ -216,7 +224,10 @@ static HChar** setup_client_env ( HChar** origenv, const HChar* toolname)
 
       ret[envc++] = cp;
    }
-   
+#if DARWIN_VERS >= DARWIN_10_15
+   // pthread really wants a non-zero value for ptr_munge
+   ret[envc++] = VG_(strdup)("initimg-darwin.sce.6", "PTHREAD_PTR_MUNGE_TOKEN=0x00000001");
+#endif
 
    /* ret[0 .. envc-1] is live now. */
    /* Find and remove a binding for VALGRIND_LAUNCHER. */
@@ -265,7 +276,6 @@ static HChar *copy_str(HChar **tab, const HChar *str)
 
    return orig;
 }
-
 
 /* ----------------------------------------------------------------
  
@@ -346,6 +356,9 @@ Addr setup_client_stack( void*  init_sp,
       stringsize += VG_(strlen)(info->interp_args) + 1;
    }
 
+   vg_assert( VG_(args_the_exename) );
+   vg_assert( VG_(strlen)( VG_(args_the_exename) ) >= 1 );
+
    /* now scan the args we're given... */
    stringsize += VG_(strlen)( VG_(args_the_exename) ) + 1;
 
@@ -363,34 +376,45 @@ Addr setup_client_stack( void*  init_sp,
       stringsize += VG_(strlen)(*cpp) + 1;
    }
 
-   /* Darwin executable_path + NULL */
-   auxsize += 2 * sizeof(Word);
+   /* NULL separator and executable path */
+   auxsize += 2 * sizeof(HChar **);
    if (info->executable_path) {
        stringsize += 1 + VG_(strlen)(info->executable_path);
+#if SDK_VERS >= SDK_10_14_6
+       stringsize += 16; // executable_path=
+#endif
    }
 
+#if defined(VGA_arm64)
+    // This is required so that dyld can load our dylib specified in DYLD_INSERT_LIBRARIES
+#define EXTRA_APPLE_ARG "arm64e_abi=all"
+    stringsize += VG_(strlen)(EXTRA_APPLE_ARG) + 1;
+    auxsize += sizeof(Word);
+#endif
+
    /* Darwin mach_header */
-   if (info->dynamic) auxsize += sizeof(Word);
+   if (info->dynamic)
+       auxsize += sizeof(Word);
 
    /* OK, now we know how big the client stack is */
    stacksize =
       sizeof(Word) +                          /* argc */
-      sizeof(HChar **) +                      /* argc[0] == exename */
-      sizeof(HChar **)*argc +                 /* argv */
+      sizeof(HChar **) +                      /* argv[0] == exename */
+      sizeof(HChar **)*argc +                 /* argv guest args */
       sizeof(HChar **) +                      /* terminal NULL */
       sizeof(HChar **)*envc +                 /* envp */
       sizeof(HChar **) +                      /* terminal NULL */
       auxsize +                               /* auxv */
       VG_ROUNDUP(stringsize, sizeof(Word));   /* strings (aligned) */
 
-   if (0) VG_(printf)("stacksize = %d\n", stacksize);
+   if (0) VG_(printf)("stacksize = %u\n", stacksize);
 
    /* client_SP is the client's stack pointer */
    client_SP = clstack_end + 1 - stacksize;
    client_SP = VG_ROUNDDN(client_SP, 32); /* make stack 32 byte aligned */
 
    /* base of the string table (aligned) */
-   stringbase = strtab = (HChar *)clstack_end 
+   stringbase = strtab = (HChar *)clstack_end + 1
                          - VG_ROUNDUP(stringsize, sizeof(int));
 
    /* The max stack size */
@@ -405,10 +429,10 @@ Addr setup_client_stack( void*  init_sp,
    VG_(clstk_end)  = clstack_end;
 
    if (0)
-      VG_(printf)("stringsize=%d auxsize=%d stacksize=%d maxsize=0x%x\n"
+      VG_(printf)("stringsize=%u auxsize=%u stacksize=%u maxsize=0x%x\n"
                   "clstack_start %p\n"
                   "clstack_end   %p\n",
-	          stringsize, auxsize, stacksize, (Int)clstack_max_size,
+	          stringsize, auxsize, stacksize, (UInt)clstack_max_size,
                   (void*)clstack_start, (void*)clstack_end);
 
    /* ==================== allocate space ==================== */
@@ -420,7 +444,8 @@ Addr setup_client_stack( void*  init_sp,
    ptr = (Addr*)client_SP;
 
    /* --- mach_header --- */
-   if (info->dynamic) *ptr++ = info->text;
+   if (info->dynamic)
+      *ptr++ = info->text;
 
    /* --- client argc --- */
    *ptr++ = (Addr)(argc + 1);
@@ -447,14 +472,41 @@ Addr setup_client_stack( void*  init_sp,
       *ptr = (Addr)copy_str(&strtab, *cpp);
    *ptr++ = 0;
 
-   /* --- executable_path + NULL --- */
-   if (info->executable_path) 
-       *ptr++ = (Addr)copy_str(&strtab, info->executable_path);
-   else 
-       *ptr++ = 0;
+   /* --- executable_path --- */
+   if (info->executable_path) {
+#if SDK_VERS >= SDK_10_14_6
+       Int executable_path_len = VG_(strlen)(info->executable_path) + 16 + 1;
+       HChar *executable_path = VG_(malloc)("initimg-darwin.scs.1", executable_path_len);
+       VG_(snprintf)(executable_path, executable_path_len, "executable_path=%s", info->executable_path);
+       *ptr++ = (Addr)copy_str(&strtab, executable_path);
+       VG_(free)(executable_path);
+#else
+      *ptr++ = (Addr)copy_str(&strtab, info->executable_path);
+#endif
+   }
+   // FIXME PJF there was an extra  *ptr++ = 0; in an else here
+   // there is a good chance that executable_path is never NULL so itr was nevwer used
+
+#if defined(VGA_arm64)
+   *ptr++ = (Addr)copy_str(&strtab, EXTRA_APPLE_ARG);
+#endif
+
    *ptr++ = 0;
 
    vg_assert((strtab-stringbase) == stringsize);
+
+   vg_assert((HChar*)ptr <= stringbase);
+
+   if (VG_(resolved_exename) == NULL) {
+      const HChar *exe_name = VG_(find_executable)(VG_(args_the_exename));
+      HChar interp_name[VKI_PATH_MAX];
+      if (VG_(try_get_interp)(exe_name, interp_name, VKI_PATH_MAX)) {
+         exe_name = interp_name;
+      }
+      HChar resolved_name[VKI_PATH_MAX];
+      VG_(realpath)(exe_name, resolved_name);
+      VG_(resolved_exename) = VG_(strdup)("initimg-darwin.scs.2", resolved_name);
+   }
 
    /* client_SP is pointing at client's argc/argv */
 
@@ -466,6 +518,38 @@ Addr setup_client_stack( void*  init_sp,
 /*====================================================================*/
 /*=== Record system memory regions                                 ===*/
 /*====================================================================*/
+
+void VG_(mach_record_system_memory)(void) {
+    /* Darwin only: tell the tools where the client's kernel commpage
+      is.  It would be better to do this by telling aspacemgr about
+      it -- see the now disused record_system_memory() below --
+      but that causes the sync checker to fail,
+      since the mapping doesn't appear in the kernel-supplied
+      process map.  So do it here instead. */
+
+#if defined(VGA_amd64)
+  VG_TRACK( new_mem_startup,
+            0x7fffffe00000, 0x7ffffffff000-0x7fffffe00000,
+            True, False, True, /* r-x */
+            0 /* di_handle: no associated debug info */ );
+#elif defined(VGA_x86)
+  VG_TRACK( new_mem_startup,
+            0xfffec000, 0xfffff000-0xfffec000,
+            True, False, True, /* r-x */
+            0 /* di_handle: no associated debug info */ );
+#elif defined(VGA_arm64)
+  VG_TRACK( new_mem_startup,
+            0xfffff4000, 0x1000,
+            True, False, True, /* r-- */
+            0 /* di_handle: no associated debug info */ );
+  VG_TRACK( new_mem_startup,
+            0xfffffc000, 0x1000,
+            True, False, True, /* r-x */
+            0 /* di_handle: no associated debug info */ );
+#else
+# error "Unknown Darwin architecture"
+#endif
+}
 
 static void record_system_memory(void)
 {
@@ -626,3 +710,4 @@ void VG_(ii_finalise_image)( IIFinaliseImageInfo iifii )
 /*--------------------------------------------------------------------*/
 /*--- end                                                          ---*/
 /*--------------------------------------------------------------------*/
+

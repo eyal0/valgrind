@@ -11,7 +11,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -187,6 +187,8 @@ void LibVEX_GuestMIPS32_initialise( /*OUT*/ VexGuestMIPS32State * vex_state)
    vex_state->guest_w1.w64[1] = 0;
    vex_state->guest_w2.w64[0] = 0;
    vex_state->guest_w2.w64[1] = 0;
+
+   vex_state->guest_IP_AT_SYSCALL = 0;
 }
 
 void LibVEX_GuestMIPS64_initialise ( /*OUT*/ VexGuestMIPS64State * vex_state )
@@ -293,6 +295,8 @@ void LibVEX_GuestMIPS64_initialise ( /*OUT*/ VexGuestMIPS64State * vex_state )
 
    vex_state->guest_LLaddr = 0xFFFFFFFFFFFFFFFFULL;
    vex_state->guest_LLdata = 0;
+
+   vex_state->guest_IP_AT_SYSCALL = 0;
 
    vex_state->guest_MSACSR = 0;
 }

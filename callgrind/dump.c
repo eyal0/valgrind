@@ -10,7 +10,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -895,7 +895,9 @@ void swap(BBCC** a, BBCC** b)
     t = *a; *a = *b; *b = t;
 }
 
+#if !defined(min)
 #define min(x, y) ((x)<=(y) ? (x) : (y))
+#endif
 
 static
 BBCC** med3(BBCC **a, BBCC **b, BBCC **c, int (*cmp)(BBCC**,BBCC**))

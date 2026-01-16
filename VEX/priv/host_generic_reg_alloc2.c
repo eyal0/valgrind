@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -494,7 +494,7 @@ HInstrArray* doRegisterAllocation_v2 (
    rreg_lrs_la = LibVEX_Alloc_inline(rreg_lrs_size * sizeof(RRegLR));
    rreg_lrs_db = NULL; /* we'll create this later */
 
-   /* We'll need to track live range start/end points seperately for
+   /* We'll need to track live range start/end points separately for
       each rreg.  Sigh. */
    vassert(n_rregs > 0);
    rreg_live_after  = LibVEX_Alloc_inline(n_rregs * sizeof(Int));

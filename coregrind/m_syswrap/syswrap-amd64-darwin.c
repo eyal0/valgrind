@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -361,6 +361,9 @@ void pthread_hijack(Addr self, Addr kport, Addr func, Addr func_arg,
    vex->guest_R8  = stacksize;
    vex->guest_R9  = flags;
    vex->guest_RSP = sp;
+#if DARWIN_VERS >= DARWIN_10_12
+   vex->guest_GS_CONST = self + pthread_tsd_offset;
+#endif
 
    // Record thread's stack and Mach port and pthread struct
    tst->os_state.pthread = self;
@@ -413,7 +416,7 @@ void pthread_hijack(Addr self, Addr kport, Addr func, Addr func_arg,
 asm(
 ".globl _wqthread_hijack_asm\n"
 "_wqthread_hijack_asm:\n"
-"   movq %rsp,%r9\n"  // original sp
+"   push %rsp\n"      // original sp
                       // other values stay where they are in registers
 "   push $0\n"        // fake return address
 "   jmp _wqthread_hijack\n"
@@ -428,7 +431,7 @@ asm(
     thread for every work item.
 */
 void wqthread_hijack(Addr self, Addr kport, Addr stackaddr, Addr workitem, 
-                     Int reuse, Addr sp)
+                     UInt reuse, Int kevent_count, Addr sp)
 {
    ThreadState *tst;
    VexGuestAMD64State *vex;
@@ -448,8 +451,8 @@ void wqthread_hijack(Addr self, Addr kport, Addr stackaddr, Addr workitem,
 
    if (0) VG_(printf)(
              "wqthread_hijack: self %#lx, kport %#lx, "
-	     "stackaddr %#lx, workitem %#lx, reuse/flags %x, sp %#lx\n", 
-	     self, kport, stackaddr, workitem, (UInt)reuse, sp);
+	     "stackaddr %#lx, workitem %#lx, reuse/flags %#x, kevent_count %d, sp %#lx\n",
+	     self, kport, stackaddr, workitem, (UInt)reuse, kevent_count, sp);
 
    /* Start the thread with all signals blocked.  VG_(scheduler) will
       set the mask correctly when we finally get there. */
@@ -473,15 +476,14 @@ void wqthread_hijack(Addr self, Addr kport, Addr stackaddr, Addr workitem,
      /* For whatever reason, tst->os_state.pthread appear to have a
         constant offset of 96 on 10.7, but zero on 10.6 and 10.5.  No
         idea why. */
-#      if DARWIN_VERS <= DARWIN_10_6
+#      if DARWIN_VERS <= DARWIN_10_6 || DARWIN_VERS >= DARWIN_10_13
        UWord magic_delta = 0;
 #      elif DARWIN_VERS == DARWIN_10_7 || DARWIN_VERS == DARWIN_10_8
        UWord magic_delta = 0x60;
 #      elif DARWIN_VERS == DARWIN_10_9 \
             || DARWIN_VERS == DARWIN_10_10 \
             || DARWIN_VERS == DARWIN_10_11 \
-            || DARWIN_VERS == DARWIN_10_12 \
-            || DARWIN_VERS == DARWIN_10_13
+            || DARWIN_VERS == DARWIN_10_12
        UWord magic_delta = 0xE0;
 #      else
 #        error "magic_delta: to be computed on new OS version"
@@ -504,6 +506,10 @@ void wqthread_hijack(Addr self, Addr kport, Addr stackaddr, Addr workitem,
                           tid, (void *)tst, tst->os_state.pthread, self);
 
        vex = &tst->arch.vex;
+       if (tst->os_state.pthread - magic_delta != self) {
+         VG_(printf)("wqthread_hijack reuse: tst->os_state.pthread %#lx vs self %#lx (diff: %#lx vs %#lx)\n",
+                     tst->os_state.pthread, self, tst->os_state.pthread - self, magic_delta);
+       }
        vg_assert(tst->os_state.pthread - magic_delta == self);
    }
    else {
@@ -523,8 +529,11 @@ void wqthread_hijack(Addr self, Addr kport, Addr stackaddr, Addr workitem,
    vex->guest_RDX = stackaddr;
    vex->guest_RCX = workitem;
    vex->guest_R8  = reuse;
-   vex->guest_R9  = 0;
+   vex->guest_R9  = kevent_count;
    vex->guest_RSP = sp;
+#if DARWIN_VERS >= DARWIN_10_12
+   vex->guest_GS_CONST = self + pthread_tsd_offset;
+#endif
 
    stacksize = 512*1024;  // wq stacks are always DEFAULT_STACK_SIZE
    stack = VG_PGROUNDUP(sp) - stacksize;

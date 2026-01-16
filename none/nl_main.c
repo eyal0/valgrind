@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -28,9 +28,14 @@
 
 #include "pub_tool_basics.h"
 #include "pub_tool_tooliface.h"
+#include "pub_tool_options.h"
 
 static void nl_post_clo_init(void)
 {
+   /* Unless we are actually tracking file descriptors we act as if we don't
+      handle any errors.  */
+   if (!VG_(clo_track_fds))
+     VG_(needs_core_errors)(False);
 }
 
 static
@@ -54,7 +59,7 @@ static void nl_pre_clo_init(void)
    VG_(details_version)         (NULL);
    VG_(details_description)     ("the minimal Valgrind tool");
    VG_(details_copyright_author)(
-      "Copyright (C) 2002-2017, and GNU GPL'd, by Nicholas Nethercote.");
+      "Copyright (C) 2002-2024, and GNU GPL'd, by Nicholas Nethercote et al.");
    VG_(details_bug_reports_to)  (VG_BUGS_TO);
 
    VG_(details_avg_translation_sizeB) ( 275 );
@@ -62,6 +67,8 @@ static void nl_pre_clo_init(void)
    VG_(basic_tool_funcs)        (nl_post_clo_init,
                                  nl_instrument,
                                  nl_fini);
+   VG_(needs_xml_output)        ();
+   VG_(needs_core_errors)       (True); /* Yes, but... see nl_post_clo_init  */
 
    /* No needs, no core events to track */
 }

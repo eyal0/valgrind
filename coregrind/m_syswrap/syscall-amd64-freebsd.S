@@ -14,7 +14,7 @@
 
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
-  published by the Free Software Foundation; either version 2 of the
+  published by the Free Software Foundation; either version 3 of the
   License, or (at your option) any later version.
 
   This program is distributed in the hope that it will be useful, but
@@ -69,7 +69,8 @@
 				  void* guest_state,		// rsi
 				  const vki_sigset_t *sysmask,	// rdx
 				  const vki_sigset_t *postmask,	// rcx
-				  Int sigsetSzB)		// r8
+                                  Int sigsetSzB,		// r8
+                                  UCHar *cflag)			// r9
 */
 
 /* from vki_arch.h */
@@ -85,6 +86,7 @@ ML_(do_syscall_for_client_WRK):
    pushq %rdx  // -24(%rbp)  sysmask
    pushq %rcx  // -32(%rbp)  postmask
    pushq %r8   // -40(%rbp)  sigsetSzB
+   pushq %r9   // -48(%rbp)  cflag
 
 1: /* Even though we can't take a signal until the sigprocmask completes,
       start the range early.
@@ -112,17 +114,9 @@ ML_(do_syscall_for_client_WRK):
    movq  OFFSET_amd64_R10(%r11), %r10
    movq  OFFSET_amd64_R8(%r11), %r8
    movq  OFFSET_amd64_R9(%r11), %r9
-   /* 2 stack parameters plus return address (ignored by syscall) */
-   /* @todo PJF there is a potential bug here
-    * syscall can take up to 8 arguments
-    * but when syscall0 or syscall198 is being used
-    * one argument is used for the syscall0/198 id
-    * and one for the actual id and in this case
-    * there could be 3 stack parameters.
-    * However, only mmap takes 8 arguments
-    * and only on x86. It would be an unlikely combination,
-    * but this might break one day. */
+   /* get RSP */
    movq  OFFSET_amd64_RSP(%r11), %r11 /* r11 = simulated RSP */
+   /* 2 stack parameters */
    movq  16(%r11), %rax
    pushq %rax
    movq  8(%r11), %rax
@@ -140,20 +134,12 @@ ML_(do_syscall_for_client_WRK):
 3:   /* In the range [3, 4), the syscall result is in %rax,
       but hasn't been committed to RAX. */
 
-   /* stack contents: 3 words for syscall above, plus our prologue */
-   setc  0(%rsp)         /* stash returned carry flag */
 
-   movq  -16(%rbp), %r11 /* r11 = VexGuestAMD64State * */
+   movq  -16(%rbp), %r11                 /* r11 = VexGuestAMD64State * */
    movq  %rax, OFFSET_amd64_RAX(%r11)    /* save back to RAX */
    movq  %rdx, OFFSET_amd64_RDX(%r11)    /* save back to RDX */
-
-   /* save carry flag to VEX */
-   xorq  %rax, %rax
-   movb  0(%rsp), %al
-   movq  %rax, %rdi      /* arg1 = new flag */
-   movq  %r11, %rsi      /* arg2 = vex state */
-   addq  $24, %rsp       /* remove syscall parameters */
-   call  LibVEX_GuestAMD64_put_rflag_c
+   movq	-48(%rbp), %rcx
+   setc	0(%rcx)				 /* save returned carry flag */
 
 4: /* Re-block signals.  If eip is in [4,5), then the syscall
       is complete and we needn't worry about it. */

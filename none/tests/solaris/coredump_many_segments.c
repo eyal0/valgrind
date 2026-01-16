@@ -81,15 +81,15 @@ static int process_map(const prmap_t *map, range_t **ranges_head,
       *ranges_tail = tail;
    }
 
-   if ((map->pr_vaddr < tail->start) ||
-       (map->pr_vaddr - tail->start < 3 * page_size)) {
+   if (((uintptr_t)map->pr_vaddr < tail->start) ||
+       ((uintptr_t)map->pr_vaddr - tail->start < 3 * page_size)) {
       DEBUG("last range at %p is too small, skipping it\n",
             tail->start);
-      tail->start = map->pr_vaddr + map->pr_size + page_size;
+      tail->start = (uintptr_t)map->pr_vaddr + map->pr_size + page_size;
       return 0;
    }
 
-   tail->end = map->pr_vaddr - page_size;
+   tail->end = (uintptr_t)map->pr_vaddr - page_size;
    tail->size = tail->end - tail->start;
 
    range_t *new_one = calloc(1, sizeof(range_t));
@@ -98,7 +98,7 @@ static int process_map(const prmap_t *map, range_t **ranges_head,
       return -1;
    }
 
-   new_one->start = map->pr_vaddr + map->pr_size + page_size;
+   new_one->start = (uintptr_t)map->pr_vaddr + map->pr_size + page_size;
    tail->next = new_one;
    *ranges_tail = new_one;
    return 0;
@@ -191,7 +191,7 @@ int main(int argc, const char *argv[])
 
    size_t sum = sum_ranges(ranges);
    if (sum < SEGMENTS * page_size) {
-      fprintf(stderr, "Free (virtual) address space cannot accomodate "
+      fprintf(stderr, "Free (virtual) address space cannot accommodate "
               "%u pages.\n", SEGMENTS);
       return 1;
    }

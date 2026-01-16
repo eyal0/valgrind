@@ -8,7 +8,7 @@
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
+   the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
 
    This program is distributed in the hope that it will be useful,
@@ -660,33 +660,6 @@ void decode_address (CORE_ADDR *addrp, const char *start, int len)
    *addrp = addr;
 }
 
-/* Convert number NIB to a hex digit.  */
-
-static
-int tohex (int nib)
-{
-   if (nib < 10)
-      return '0' + nib;
-   else
-      return 'a' + nib - 10;
-}
-
-int hexify (char *hex, const char *bin, int count)
-{
-   int i;
-
-   /* May use a length, or a nul-terminated string as input. */
-   if (count == 0)
-      count = strlen (bin);
-
-  for (i = 0; i < count; i++) {
-     *hex++ = tohex ((*bin >> 4) & 0xf);
-     *hex++ = tohex (*bin++ & 0xf);
-  }
-  *hex = 0;
-  return i;
-}
-
 /* builds an image of bin according to byte order of the architecture 
    Useful for register and int image */
 char* heximage (char *buf, const char *bin, int count)
@@ -1164,7 +1137,7 @@ void prepare_resume_reply (char *buf, char status, unsigned char sig)
          CORE_ADDR addr;
          int i;
 
-         strncpy (buf, "watch:", 6);
+         memcpy (buf, "watch:", 6);
          buf += 6;
 
          addr = valgrind_stopped_data_address ();

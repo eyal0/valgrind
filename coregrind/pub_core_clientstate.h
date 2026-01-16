@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -97,6 +97,9 @@ extern Addr VG_(client_freeres_wrapper);
    help produce better back traces.  See big comment in
    VG_(get_StackTrace) in m_stacktrace.c for further info. */
 extern Addr VG_(client__dl_sysinfo_int80);
+
+/* Get the maximum client stacksize. */
+extern SizeT VG_(get_client_stack_max_size)(void);
 
 /* Obtains the initial client stack pointer from the finalised image info. */
 extern Addr VG_(get_initial_client_SP)(void);

@@ -1,10 +1,9 @@
 
 Requirements
 ------------
-- You need GCC 3.4 or later to compile the s390 port.
-- To run valgrind a z10 machine or any later model is recommended.
-  Older machine models down to and including z990 may work but have
-  not been tested extensively.
+- You need a GCC-compatible compiler with C11 support to compile
+  the s390 port.
+- Valgrind requires a machine not older than z196 to run.
 
 
 Limitations
@@ -17,9 +16,6 @@ Limitations
   `docs/internals/s390-opcodes.csv', by grepping for "not implemented".
 - FP signalling is not accurate. E.g., the "compare and signal"
   instructions behave like their non-signalling counterparts.
-- On machine models predating z10, cachegrind will assume a z10 cache
-  architecture. Otherwise, cachegrind will query the hosts cache system
-  and use those parameters.
 - Some gcc versions use mvc to copy 4/8 byte values. This will affect
   certain debug messages. For example, memcheck will complain about
   4 one-byte reads/writes instead of just a single read/write.
@@ -42,6 +38,6 @@ Reading Material
 (1) ELF ABI s390x Supplement
     https://github.com/IBM/s390x-abi/releases
 (2) z/Architecture Principles of Operation
-    https://www.ibm.com/support/pages/zarchitecture-principles-operation
-(3) z/Architecture Reference Summary
-    https://www.ibm.com/support/pages/zarchitecture-reference-summary
+    https://www.ibm.com/docs/en/module_1678991624569/pdf/SA22-7832-14.pdf
+(3) Collection of z/Architecture publications
+    https://linux.mainframe.blog/zarchitecture-principles-of-operation/

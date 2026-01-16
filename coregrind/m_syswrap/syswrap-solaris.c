@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -511,6 +511,9 @@ ULong ML_(fletcher64)(UInt *buf, SizeT blocks)
    return (sum2 << 32) | sum1;
 }
 
+#pragma GCC push_options
+#pragma GCC optimize ("O0")
+
 /* Save a complete context (VCPU state, sigmask) of a given client thread
    into the vki_ucontext_t structure.  This structure is supposed to be
    allocated in the client memory, a caller must make sure that the memory can
@@ -665,6 +668,8 @@ void VG_(restore_context)(ThreadId tid, vki_ucontext_t *uc, CorePart part,
                   (new_esp - old_esp) + VG_STACK_REDZONE_SZB);
    }
 }
+
+#pragma GCC pop_options
 
 /* Set a client stack associated with a given thread id according to values
    passed in the vki_stack_t structure. */
@@ -1770,6 +1775,8 @@ PRE(sys_open)
 
 POST(sys_open)
 {
+   POST_newFd_RES;
+
    if (!ML_(fd_allowed)(RES, "open", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure(VKI_EMFILE);
@@ -1782,16 +1789,7 @@ PRE(sys_close)
 {
    WRAPPER_PRE_NAME(generic, sys_close)(tid, layout, arrghs, status,
                                         flags);
-}
-
-POST(sys_close)
-{
-   WRAPPER_POST_NAME(generic, sys_close)(tid, arrghs, status);
    door_record_revoke(tid, ARG1);
-   /* Possibly an explicitly open'ed client door fd was just closed.
-      Generic sys_close wrapper calls this only if VG_(clo_track_fds) = True. */
-   if (!VG_(clo_track_fds))
-      ML_(record_fd_close)(ARG1);
 }
 
 PRE(sys_linkat)
@@ -1814,18 +1812,8 @@ PRE(sys_linkat)
    PRE_MEM_RASCIIZ("linkat(path2)", ARG4);
 
    /* Be strict but ignore fd1/fd2 for absolute path1/path2. */
-   if (fd1 != VKI_AT_FDCWD
-       && ML_(safe_to_deref)((void *) ARG2, 1)
-       && ((HChar *) ARG2)[0] != '/'
-       && !ML_(fd_allowed)(fd1, "linkat", tid, False)) {
-      SET_STATUS_Failure(VKI_EBADF);
-   }
-   if (fd2 != VKI_AT_FDCWD
-       && ML_(safe_to_deref)((void *) ARG4, 1)
-       && ((HChar *) ARG4)[0] != '/'
-       && !ML_(fd_allowed)(fd2, "linkat", tid, False)) {
-      SET_STATUS_Failure(VKI_EBADF);
-   }
+   ML_(fd_at_check_allowed)(fd1, (const HChar*)ARG2, "linkat(efd)", tid, status);
+   ML_(fd_at_check_allowed)(fd2, (const HChar*)ARG4, "linkat(nfd)", tid, status);
 
    *flags |= SfMayBlock;
 }
@@ -1846,11 +1834,7 @@ PRE(sys_symlinkat)
    PRE_MEM_RASCIIZ("symlinkat(path2)", ARG3);
 
    /* Be strict but ignore fd for absolute path2. */
-   if (fd != VKI_AT_FDCWD
-       && ML_(safe_to_deref)((void *) ARG3, 1)
-       && ((HChar *) ARG3)[0] != '/'
-       && !ML_(fd_allowed)(fd, "symlinkat", tid, False))
-      SET_STATUS_Failure(VKI_EBADF);
+   ML_(fd_at_check_allowed)(fd, (const HChar*)ARG3, "symlinkat", tid, status);
 
    *flags |= SfMayBlock;
 }
@@ -2311,7 +2295,6 @@ PRE(sys_readlinkat)
    /* ssize_t readlinkat(int dfd, const char *path, char *buf,
                          size_t bufsiz); */
    HChar name[30];    // large enough
-   Word saved = SYSNO;
 
    /* Interpret the first argument as 32-bit value even on 64-bit architecture.
       This is different from Linux, for example, where glibc sign-extends it. */
@@ -2325,13 +2308,7 @@ PRE(sys_readlinkat)
    PRE_MEM_WRITE("readlinkat(buf)", ARG3, ARG4);
 
    /* Be strict but ignore dfd for absolute path. */
-   if (dfd != VKI_AT_FDCWD
-       && ML_(safe_to_deref)((void *) ARG2, 1)
-       && ((HChar *) ARG2)[0] != '/'
-       && !ML_(fd_allowed)(dfd, "readlinkat", tid, False)) {
-      SET_STATUS_Failure(VKI_EBADF);
-      return;
-   }
+   ML_(fd_at_check_allowed)(dfd, (const HChar*)ARG2, "readlinkat", tid, status);
 
    /* Handle the case where readlinkat is looking at /proc/self/path/a.out or
       /proc/<pid>/path/a.out. */
@@ -2339,9 +2316,15 @@ PRE(sys_readlinkat)
    if (ML_(safe_to_deref)((void*)ARG2, 1) &&
        (!VG_(strcmp)((HChar*)ARG2, name) ||
         !VG_(strcmp)((HChar*)ARG2, "/proc/self/path/a.out"))) {
-      VG_(sprintf)(name, "/proc/self/path/%d", VG_(cl_exec_fd));
-      SET_STATUS_from_SysRes(VG_(do_syscall4)(saved, dfd, (UWord)name, ARG3,
-                                              ARG4));
+       HChar* out_name = (HChar*)ARG3;
+       SizeT res = VG_(strlen)(VG_(resolved_exename));
+       res = VG_MIN(res, ARG4);
+       if (ML_(safe_to_deref)(out_name, res)) {
+          VG_(strncpy)(out_name, VG_(resolved_exename), res);
+          SET_STATUS_Success(res);
+       } else {
+          SET_STATUS_Failure(VKI_EFAULT);
+       }
    }
 }
 
@@ -2366,8 +2349,6 @@ PRE(sys_fstat)
    PRINT("sys_fstat ( %ld, %#lx )", SARG1, ARG2);
    PRE_REG_READ2(long, "fstat", int, fildes, struct stat *, buf);
    PRE_MEM_WRITE("fstat(buf)", ARG2, sizeof(struct vki_stat));
-
-   /* Be strict. */
    if (!ML_(fd_allowed)(ARG1, "fstat", tid, False))
       SET_STATUS_Failure(VKI_EBADF);
 }
@@ -2394,11 +2375,7 @@ PRE(sys_frealpathat)
    PRE_MEM_WRITE("frealpathat(buf)", ARG3, ARG4);
 
    /* Be strict but ignore fd for absolute path. */
-   if (fd != VKI_AT_FDCWD
-       && ML_(safe_to_deref)((void *) ARG2, 1)
-       && ((HChar *) ARG2)[0] != '/'
-       && !ML_(fd_allowed)(fd, "frealpathat", tid, False))
-      SET_STATUS_Failure(VKI_EBADF);
+   ML_(fd_at_check_allowed)(fd, (const HChar*)ARG2, "frealpathat", tid, status);
 }
 
 POST(sys_frealpathat)
@@ -2498,6 +2475,7 @@ PRE(sys_pipe)
 POST(sys_pipe)
 {
    Int p0, p1;
+   // @todo PJF this needs something like POST_newFd_RES for the two fds?
 
 #if defined(SOLARIS_NEW_PIPE_SYSCALL)
    int *fds = (int*)ARG1;
@@ -2536,11 +2514,7 @@ PRE(sys_faccessat)
    PRE_MEM_RASCIIZ("faccessat(path)", ARG2);
 
    /* Be strict but ignore fd for absolute path. */
-   if (fd != VKI_AT_FDCWD
-       && ML_(safe_to_deref)((void *) ARG2, 1)
-       && ((HChar *) ARG2)[0] != '/'
-       && !ML_(fd_allowed)(fd, "faccessat", tid, False))
-      SET_STATUS_Failure(VKI_EBADF);
+   ML_(fd_at_check_allowed)(fd, (const HChar*)ARG2, "faccessat", tid, status);
 }
 
 PRE(sys_mknodat)
@@ -2558,17 +2532,14 @@ PRE(sys_mknodat)
    PRE_MEM_RASCIIZ("mknodat(fname)", ARG2);
 
    /* Be strict but ignore fd for absolute path. */
-   if (fd != VKI_AT_FDCWD
-       && ML_(safe_to_deref)((void *) ARG2, 1)
-       && ((HChar *) ARG2)[0] != '/'
-       && !ML_(fd_allowed)(fd, "mknodat", tid, False))
-      SET_STATUS_Failure(VKI_EBADF);
+   ML_(fd_at_check_allowed)(fd, (const HChar*)ARG2, "mknodat", tid, status);
 
    *flags |= SfMayBlock;
 }
 
 POST(sys_mknodat)
 {
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "mknodat", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure(VKI_EMFILE);
@@ -2752,7 +2723,7 @@ PRE(sys_shmsys)
 #if defined(SOLARIS_SHM_NEW)
    case VKI_SHMADV:
       /* Libc: int shmadv(int shmid, uint_t cmd, uint_t *advice); */
-      PRINT("sys_shmsys ( %ld, %ld, %lu, %ld )",
+      PRINT("sys_shmsys ( %ld, %ld, %lu, %lu )",
             SARG1, SARG2, ARG3, ARG4);
       PRE_REG_READ4(long, SC2("shmsys", "shmadv"), int, opcode,
                     int, shmid, vki_uint_t, cmd, vki_uint_t *, advice);
@@ -3599,11 +3570,7 @@ PRE(sys_fchownat)
       PRE_MEM_RASCIIZ("fchownat(path)", ARG2);
 
    /* Be strict but ignore fd for absolute path. */
-   if (fd != VKI_AT_FDCWD
-       && ML_(safe_to_deref)((void *) ARG2, 1)
-       && ((HChar *) ARG2)[0] != '/'
-       && !ML_(fd_allowed)(fd, "fchownat", tid, False))
-      SET_STATUS_Failure(VKI_EBADF);
+   ML_(fd_at_check_allowed)(fd, (const HChar*)ARG2, "fchownat", tid, status);
 }
 
 PRE(sys_fdsync)
@@ -3939,7 +3906,7 @@ PRE(sys_execve)
 #if defined(SOLARIS_EXECVE_SYSCALL_TAKES_FLAGS)
    if (ARG1_is_fd)
       VG_(message)(Vg_UserMsg, "execve(%ld, %#lx, %#lx, %lu) failed, "
-                   "errno %ld\n", SARG1, ARG2, ARG3, ARG4, ERR);
+                   "errno %lu\n", SARG1, ARG2, ARG3, ARG4, ERR);
    else
       VG_(message)(Vg_UserMsg, "execve(%#lx(%s), %#lx, %#lx, %ld) failed, errno"
                    " %lu\n", ARG1, (HChar *) ARG1, ARG2, ARG3, SARG4, ERR);
@@ -3997,11 +3964,13 @@ PRE(sys_fcntl)
       PRE_REG_READ3(long, "fcntl", int, fildes, int, cmd, int, arg);
       /* Check if a client program isn't going to poison any of V's output
          fds. */
+      /*
       if (ARG2 == VKI_F_DUP2FD &&
           !ML_(fd_allowed)(ARG3, "fcntl(F_DUP2FD)", tid, False)) {
          SET_STATUS_Failure(VKI_EBADF);
          return;
       }
+      */
       break;
 
    /* These ones use ARG3 as "native lock" (input only). */
@@ -4078,8 +4047,11 @@ PRE(sys_fcntl)
 
 POST(sys_fcntl)
 {
+   // @todo PJF we're missing
+   // F_DUP2FD_CLOEXEC F_DUP2FD_CLOFORK F_DUPFD_CLOFORK F_DUP3FD
    switch (ARG2 /*cmd*/) {
    case VKI_F_DUPFD:
+      POST_newFd_RES;
       if (!ML_(fd_allowed)(RES, "fcntl(F_DUPFD)", tid, True)) {
          VG_(close)(RES);
          SET_STATUS_Failure(VKI_EMFILE);
@@ -4088,6 +4060,7 @@ POST(sys_fcntl)
       break;
 
    case VKI_F_DUPFD_CLOEXEC:
+      POST_newFd_RES;
       if (!ML_(fd_allowed)(RES, "fcntl(F_DUPFD_CLOEXEC)", tid, True)) {
          VG_(close)(RES);
          SET_STATUS_Failure(VKI_EMFILE);
@@ -4096,6 +4069,7 @@ POST(sys_fcntl)
       break;
 
    case VKI_F_DUP2FD:
+      POST_newFd_RES;
       if (!ML_(fd_allowed)(RES, "fcntl(F_DUP2FD)", tid, True)) {
          VG_(close)(RES);
          SET_STATUS_Failure(VKI_EMFILE);
@@ -4140,18 +4114,8 @@ PRE(sys_renameat)
    PRE_MEM_RASCIIZ("renameat(new)", ARG4);
 
    /* Be strict but ignore fromfd/tofd for absolute old/new. */
-   if (fromfd != VKI_AT_FDCWD
-       && ML_(safe_to_deref)((void *) ARG2, 1)
-       && ((HChar *) ARG2)[0] != '/'
-       && !ML_(fd_allowed)(fromfd, "renameat", tid, False)) {
-      SET_STATUS_Failure(VKI_EBADF);
-   }
-   if (tofd != VKI_AT_FDCWD
-       && ML_(safe_to_deref)((void *) ARG4, 1)
-       && ((HChar *) ARG4)[0] != '/'
-       && !ML_(fd_allowed)(tofd, "renameat", tid, False)) {
-      SET_STATUS_Failure(VKI_EBADF);
-   }
+   ML_(fd_at_check_allowed)(fromfd, (const HChar*)ARG2, "renameat(fromfd)", tid, status);
+   ML_(fd_at_check_allowed)(tofd, (const HChar*)ARG4, "renameat(tofd)", tid, status);
 }
 
 PRE(sys_unlinkat)
@@ -4170,11 +4134,7 @@ PRE(sys_unlinkat)
    PRE_MEM_RASCIIZ("unlinkat(pathname)", ARG2);
 
    /* Be strict but ignore dfd for absolute pathname. */
-   if (dfd != VKI_AT_FDCWD
-       && ML_(safe_to_deref)((void *) ARG2, 1)
-       && ((HChar *) ARG2)[0] != '/'
-       && !ML_(fd_allowed)(dfd, "unlinkat", tid, False))
-      SET_STATUS_Failure(VKI_EBADF);
+   ML_(fd_at_check_allowed)(dfd, (const HChar*)ARG2, "unlinkat", tid, status);
 }
 
 PRE(sys_fstatat)
@@ -4198,11 +4158,7 @@ PRE(sys_fstatat)
    PRE_MEM_WRITE("fstatat(buf)", ARG3, sizeof(struct vki_stat));
 
    /* Be strict but ignore fildes for absolute path. */
-   if (fd != VKI_AT_FDCWD
-       && ML_(safe_to_deref)((void *) ARG2, 1)
-       && ((HChar *) ARG2)[0] != '/'
-       && !ML_(fd_allowed)(fd, "fstatat", tid, False))
-      SET_STATUS_Failure(VKI_EBADF);
+   ML_(fd_at_check_allowed)(fd, (const HChar*)ARG2, "fstatat", tid, status);
 }
 
 POST(sys_fstatat)
@@ -4236,6 +4192,7 @@ PRE(sys_openat)
 
    PRE_MEM_RASCIIZ("openat(filename)", ARG2);
 
+   // @todo PJF use ML_(fd_at_check) and not return early here
    /* Be strict but ignore fildes for absolute pathname. */
    if (fd != VKI_AT_FDCWD
        && ML_(safe_to_deref)((void *) ARG2, 1)
@@ -4262,6 +4219,7 @@ PRE(sys_openat)
 
 POST(sys_openat)
 {
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "openat", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure(VKI_EMFILE);
@@ -5053,11 +5011,7 @@ PRE(sys_fchmodat)
       PRE_MEM_RASCIIZ("fchmodat(path)", ARG2);
 
    /* Be strict but ignore fd for absolute path. */
-   if (fd != VKI_AT_FDCWD
-       && ML_(safe_to_deref)((void *) ARG2, 1)
-       && ((HChar *) ARG2)[0] != '/'
-       && !ML_(fd_allowed)(fd, "fchmodat", tid, False))
-      SET_STATUS_Failure(VKI_EBADF);
+   ML_(fd_at_check_allowed)(fd, (const HChar*)ARG2, "fchmodat", tid, status);
 }
 
 PRE(sys_mkdirat)
@@ -5075,11 +5029,7 @@ PRE(sys_mkdirat)
    PRE_MEM_RASCIIZ("mkdirat(path)", ARG2);
 
    /* Be strict but ignore fd for absolute path. */
-   if (fd != VKI_AT_FDCWD
-       && ML_(safe_to_deref)((void *) ARG2, 1)
-       && ((HChar *) ARG2)[0] != '/'
-       && !ML_(fd_allowed)(fd, "mkdirat", tid, False))
-      SET_STATUS_Failure(VKI_EBADF);
+   ML_(fd_at_check_allowed)(fd, (const HChar*)ARG2, "mkdirat", tid, status);
 }
 
 static void do_statvfs_post(struct vki_statvfs *stats, ThreadId tid)
@@ -5271,11 +5221,7 @@ PRE(sys_utimesys)
             PRE_MEM_READ("utimesys(times)", ARG4, 2 * sizeof(vki_timespec_t));
 
          /* Be strict but ignore fd for absolute path. */
-         if (fd != VKI_AT_FDCWD
-             && ML_(safe_to_deref)((void *) ARG3, 1)
-             && ((HChar *) ARG3)[0] != '/'
-             && !ML_(fd_allowed)(fd, "utimesys", tid, False))
-            SET_STATUS_Failure(VKI_EBADF);
+         ML_(fd_at_check_allowed)(fd, (const HChar*)ARG3, "utimesys", tid, status);
          break;
       }
    default:
@@ -5307,11 +5253,7 @@ PRE(sys_utimensat)
       PRE_MEM_READ("utimensat(times)", ARG3, 2 * sizeof(vki_timespec_t));
 
    /* Be strict but ignore fd for absolute path. */
-   if (fd != VKI_AT_FDCWD
-       && ML_(safe_to_deref)((void *) ARG2, 1)
-       && ((HChar *) ARG2)[0] != '/'
-       && !ML_(fd_allowed)(fd, "utimensat", tid, False))
-      SET_STATUS_Failure(VKI_EBADF);
+   ML_(fd_at_check_allowed)(fd, (const HChar*)ARG2, "utimensat", tid, status);
 }
 #endif /* SOLARIS_UTIMENSAT_SYSCALL */
 
@@ -6908,7 +6850,7 @@ PRE(sys_modctl)
 
       default:
          VG_(unimplemented)("Syswrap of the modctl call with command "
-                            "MODNVL_DEVLINKSYNC and op %ld.", ARG2);
+                            "MODNVL_DEVLINKSYNC and op %lu.", ARG2);
          /*NOTREACHED*/
          break;
       }
@@ -7783,6 +7725,7 @@ POST(sys_port)
    Int opcode = ARG1 & VKI_PORT_CODE_MASK;
    switch (opcode) {
    case VKI_PORT_CREATE:
+      POST_newFd_RES;
       if (!ML_(fd_allowed)(RES, "port", tid, True)) {
          VG_(close)(RES);
          SET_STATUS_Failure(VKI_EMFILE);
@@ -8544,6 +8487,7 @@ PRE(sys_timer_delete)
    /* int timer_delete(timer_t timerid); */
    PRINT("sys_timer_delete ( %ld )", SARG1);
    PRE_REG_READ1(long, "timer_delete", vki_timer_t, timerid);
+   *flags |= SfPollAfter;
 }
 
 PRE(sys_timer_settime)
@@ -8693,7 +8637,7 @@ static Int pre_check_and_close_fds(ThreadId tid, const HChar *name,
          if ((desc->d_attributes & DOOR_DESCRIPTOR) &&
              (desc->d_attributes & DOOR_RELEASE)) {
             Int fd = desc->d_data.d_desc.d_descriptor;
-            ML_(record_fd_close)(fd);
+            ML_(record_fd_close)(tid, fd);
          }
       }
    }
@@ -9558,12 +9502,18 @@ POST(sys_door)
 
    switch (ARG6 /*subcode*/) {
    case VKI_DOOR_CREATE:
-      door_record_server(tid, ARG1, RES);
+      POST_newFd_RES;
+      if (!ML_(fd_allowed)(RES, "door_create", tid, True)) {
+         VG_(close)(RES);
+         SET_STATUS_Failure( VKI_EMFILE );
+      } else {
+         door_record_server(tid, ARG1, RES);
+      }
       break;
    case VKI_DOOR_REVOKE:
       door_record_revoke(tid, ARG1);
       if (VG_(clo_track_fds))
-         ML_(record_fd_close)(ARG1);
+         ML_(record_fd_close)(tid, ARG1);
       break;
    case VKI_DOOR_INFO:
       POST_MEM_WRITE(ARG2, sizeof(vki_door_info_t));
@@ -10829,7 +10779,7 @@ static SyscallTableEntry syscall_table[] = {
 #if defined(SOLARIS_OLD_SYSCALLS)
    SOLXY(__NR_open,                 sys_open),                  /*   5 */
 #endif /* SOLARIS_OLD_SYSCALLS */
-   SOLXY(__NR_close,                sys_close),                 /*   6 */
+   SOLX_(__NR_close,                sys_close),                 /*   6 */
    SOLX_(__NR_linkat,               sys_linkat),                /*   7 */
 #if defined(SOLARIS_OLD_SYSCALLS)
    GENX_(__NR_link,                 sys_link),                  /*   9 */
@@ -10914,7 +10864,7 @@ static SyscallTableEntry syscall_table[] = {
 #if defined(SOLARIS_OLD_SYSCALLS)
    SOLXY(__NR_lstat,                sys_lstat),                 /*  88 */
    GENX_(__NR_symlink,              sys_symlink),               /*  89 */
-   GENX_(__NR_readlink,             sys_readlink),              /*  90 */
+   GENXY(__NR_readlink,             sys_readlink),              /*  90 */
 #endif /* SOLARIS_OLD_SYSCALLS */
    GENX_(__NR_setgroups,            sys_setgroups),             /*  91 */
    GENXY(__NR_getgroups,            sys_getgroups),             /*  92 */
@@ -10953,6 +10903,9 @@ static SyscallTableEntry syscall_table[] = {
 #if defined(SOLARIS_UUIDSYS_SYSCALL)
    SOLXY(__NR_uuidsys,              sys_uuidsys),               /* 124 */
 #endif /* SOLARIS_UUIDSYS_SYSCALL */
+#if defined(HAVE_MREMAP)
+   GENX_(__NR_mremap,               sys_mremap),                /* 126 (Solaris only, not Illumos) */
+#endif /* HAVE_MREMAP */
    SOLX_(__NR_mmapobj,              sys_mmapobj),               /* 127 */
    GENX_(__NR_setrlimit,            sys_setrlimit),             /* 128 */
    GENXY(__NR_getrlimit,            sys_getrlimit),             /* 129 */
@@ -10972,7 +10925,7 @@ static SyscallTableEntry syscall_table[] = {
    SOLX_(__NR_seteuid,              sys_seteuid),               /* 141 */
    SOLX_(__NR_forksys,              sys_forksys),               /* 142 */
 #if defined(SOLARIS_GETRANDOM_SYSCALL)
-   SOLXY(__NR_getrandom,            sys_getrandom),             /* 143 */
+   SOLXY(__NR_getrandom,            sys_getrandom),             /* 143 (Solaris) 126 (Illumos) */
 #endif /* SOLARIS_GETRANDOM_SYSCALL */
    SOLXY(__NR_sigtimedwait,         sys_sigtimedwait),          /* 144 */
    SOLX_(__NR_yield,                sys_yield),                 /* 146 */

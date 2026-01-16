@@ -5,7 +5,7 @@
 
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
-  published by the Free Software Foundation; either version 2 of the
+  published by the Free Software Foundation; either version 3 of the
   License, or (at your option) any later version.
 
   This program is distributed in the hope that it will be useful, but
@@ -629,6 +629,7 @@ void  drd_update_extra_suppresion_use(const Error* e, const Supp* supp)
 /** Tell the Valgrind core about DRD's error handlers. */
 void DRD_(register_error_handlers)(void)
 {
+   VG_(needs_core_errors)(True);
    VG_(needs_tool_errors)(drd_compare_error_contexts,
                           drd_tool_error_before_pp,
                           drd_tool_error_pp,

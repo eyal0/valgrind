@@ -13,7 +13,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -2069,14 +2069,14 @@ static HReg iselWordExpr_R_wrk ( ISelEnv* env, const IRExpr* e,
          }
          break;
 
-      case Iop_Clz32: case Iop_ClzNat32:
-      case Iop_Clz64: case Iop_ClzNat64: {
+      case Iop_ClzNat32:
+      case Iop_ClzNat64: {
          // cntlz is available even in the most basic (earliest) ppc
          // variants, so it's safe to generate it unconditionally.
          HReg r_src, r_dst;
-         PPCUnaryOp op_clz = (op_unop == Iop_Clz32 || op_unop == Iop_ClzNat32)
+         PPCUnaryOp op_clz = (op_unop == Iop_ClzNat32)
                                 ? Pun_CLZ32 : Pun_CLZ64;
-         if ((op_unop == Iop_Clz64 || op_unop == Iop_ClzNat64) && !mode64)
+         if ((op_unop == Iop_ClzNat64) && !mode64)
             goto irreducible;
          /* Count leading zeroes. */
          r_dst = newVRegI(env);
@@ -2085,9 +2085,7 @@ static HReg iselWordExpr_R_wrk ( ISelEnv* env, const IRExpr* e,
          return r_dst;
       }
 
-      //case Iop_Ctz32:
       case Iop_CtzNat32:
-      //case Iop_Ctz64:
       case Iop_CtzNat64:
       {
          // Generate code using Clz, because we can't assume the host has
@@ -2095,7 +2093,7 @@ static HReg iselWordExpr_R_wrk ( ISelEnv* env, const IRExpr* e,
          // creating a Ctz in ir_opt.c from smaller fragments.
          PPCUnaryOp op_clz = Pun_CLZ64;
          Int WS = 64;
-         if (op_unop == Iop_Ctz32 || op_unop == Iop_CtzNat32) {
+         if (op_unop == Iop_CtzNat32) {
             op_clz = Pun_CLZ32;
             WS = 32;
          }
@@ -7261,7 +7259,7 @@ HInstrArray* iselSB_PPC ( const IRSB* bb,
 {
    Int       i, j;
    HReg      hregLo, hregMedLo, hregMedHi, hregHi;
-   ISelEnv*  env;
+   ISelEnv  *env, envmem;
    UInt      hwcaps_host = archinfo_host->hwcaps;
    Bool      mode64 = False;
    UInt      mask32, mask64;
@@ -7299,7 +7297,7 @@ HInstrArray* iselSB_PPC ( const IRSB* bb,
      IEndianess = Iend_LE;
 
    /* Make up an initial environment to use. */
-   env = LibVEX_Alloc_inline(sizeof(ISelEnv));
+   env = &envmem;
    env->vreg_ctr = 0;
 
    /* Are we being ppc32 or ppc64? */

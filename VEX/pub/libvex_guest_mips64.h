@@ -11,7 +11,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -184,6 +184,8 @@ typedef
       /* 1144 */ UInt guest_MSACSR;
 
       /* 1148 */ UInt _padding2;
+      /* 1152 */ ULong guest_IP_AT_SYSCALL;
+      /* 1160 */ ULong _padding3;
 
 } VexGuestMIPS64State;
 

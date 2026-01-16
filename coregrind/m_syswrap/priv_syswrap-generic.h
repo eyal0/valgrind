@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -59,7 +59,20 @@ extern
 Bool ML_(fd_allowed)(Int fd, const HChar *syscallname, ThreadId tid,
                      Bool isNewFD);
 
-extern void ML_(record_fd_close)               (Int fd);
+// used bye "*at" syscalls that take a directory fd for use
+// with relative paths. Need to check that
+// 1. the path is relative
+// 2. the directory is not the specail value VKI_AT_FDCWD
+// 3. the directory fd is allowd (as above)
+extern
+void ML_(fd_at_check_allowed)(Int fd, const HChar* path,
+                              const HChar* function_name, ThreadId tid,
+                              SyscallStatus* status);
+
+
+extern void ML_(record_fd_close)               (ThreadId tid, Int fd);
+extern Int  ML_(get_fd_count)                  (void);
+extern void ML_(record_fd_close_range)         (ThreadId tid, Int fd);
 extern void ML_(record_fd_open_named)          (ThreadId tid, Int fd);
 extern void ML_(record_fd_open_nameless)       (ThreadId tid, Int fd);
 extern void ML_(record_fd_open_with_given_name)(ThreadId tid, Int fd,
@@ -70,6 +83,8 @@ extern Bool ML_(fd_recorded)(Int fd);
 // Returns a pathname representing a recorded fd.
 // Returned string must not be modified nor free'd.
 extern const HChar *ML_(find_fd_recorded_by_fd)(Int fd);
+
+extern int ML_(get_next_new_fd)(Int fd);
 
 // Used when killing threads -- we must not kill a thread if it's the thread
 // that would do Valgrind's final cleanup and output.
@@ -260,6 +275,7 @@ DECL_TEMPLATE(generic, sys_mincore);               // * L?
 DECL_TEMPLATE(generic, sys_getdents64);            // * (SVr4,SVID?)
 DECL_TEMPLATE(generic, sys_statfs64);              // * (?)
 DECL_TEMPLATE(generic, sys_fstatfs64);             // * (?)
+DECL_TEMPLATE(generic, sys_mlock2);                // * L
 
 
 /* ---------------------------------------------------------------------
@@ -334,6 +350,18 @@ extern SysRes ML_(generic_PRE_sys_mmap)         ( TId, UW, UW, UW, UW, UW, Off64
 #undef UW
 #undef SR
 
+/* Helper macro for POST handlers that return a new file in RES.
+   If possible sets RES (through SET_STATUS_Success) to a new
+   (not yet seem before) file descriptor.  */
+#define POST_newFd_RES                                       \
+  do {                                                       \
+    if ((VG_(clo_modify_fds) == VG_MODIFY_FD_YES && RES > 2) \
+        ||  (VG_(clo_modify_fds) == VG_MODIFY_FD_HIGH)) {    \
+       int newFd = ML_(get_next_new_fd)(RES);                \
+       if (newFd != RES)                                     \
+          SET_STATUS_Success(newFd);                         \
+    }                                                        \
+  } while (0)
 
 /////////////////////////////////////////////////////////////////
 

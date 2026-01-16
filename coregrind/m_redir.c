@@ -14,7 +14,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -533,6 +533,19 @@ void VG_(redir_notify_new_DebugInfo)( DebugInfo* newdi )
          alloc_symname_array(sym_name_pri, sym_names_sec, &twoslots[0]);
       const HChar** names;
       for (names = names_init; *names; names++) {
+         /*
+          * For Ada demangling, the language doesn't use a regular
+          * prefix like _Z or _R, so look for a common symbol and
+          * set a global flag.
+          *
+          * https://bugs.kde.org/show_bug.cgi?id=497723 but not for
+          * callgrind because demangled overloaded names get
+          * incorrectly counted together.
+          */
+         if (!isText && VG_(strcmp)(*names, "__gnat_ada_main_program_name") == 0 &&
+             VG_(strcmp)(VG_(clo_toolname), "callgrind") != 0)  {
+            VG_(lang_is_ada) = True;
+         }
          isGlobal = False;
          ok = VG_(maybe_Z_demangle)( *names,
                                      &demangled_sopatt,
@@ -1240,6 +1253,7 @@ Bool VG_(is_soname_ld_so) (const HChar *soname)
    if (VG_STREQ(soname, VG_U_LD_LINUX_AARCH64_SO_1)) return True;
    if (VG_STREQ(soname, VG_U_LD_LINUX_ARMHF_SO_3))   return True;
    if (VG_STREQ(soname, VG_U_LD_LINUX_MIPSN8_S0_1))  return True;
+   if (VG_STREQ(soname, VG_U_LD_LINUX_RISCV64_SO_1)) return True;
 #  elif defined(VGO_freebsd)
    if (VG_STREQ(soname, VG_U_LD_ELF_SO_1))   return True;
    if (VG_STREQ(soname, VG_U_LD_ELF32_SO_1))   return True;
@@ -1410,6 +1424,24 @@ void VG_(redir_initialise) ( void )
          complain_about_stripped_glibc_ldso
 #        endif
       );   
+      add_hardwired_spec(
+         "ld-linux-x86-64.so.2", "strcmp",
+         (Addr)&VG_(amd64_linux_REDIR_FOR_strcmp),
+#        ifndef GLIBC_MANDATORY_STRLEN_REDIRECT
+         NULL
+#        else
+         complain_about_stripped_glibc_ldso
+#        endif
+      );
+      add_hardwired_spec(
+         "ld-linux-x86-64.so.2", "memcmp",
+         (Addr)&VG_(amd64_linux_REDIR_FOR_memcmp),
+#        ifndef GLIBC_MANDATORY_STRLEN_REDIRECT
+         NULL
+#        else
+         complain_about_stripped_glibc_ldso
+#        endif
+      );
    }
 
 #  elif defined(VGP_ppc32_linux)
@@ -1475,6 +1507,12 @@ void VG_(redir_initialise) ( void )
          (Addr)&VG_(ppc64_linux_REDIR_FOR_strchr),
          NULL /* not mandatory - so why bother at all? */
          /* glibc-2.5 (FC6, ppc64) seems fine without it */
+      );
+
+      add_hardwired_spec(
+         "ld64.so.2", "strcmp",
+         (Addr)&VG_(ppc64_linux_REDIR_FOR_strcmp),
+         NULL
       );
    }
 
@@ -1558,7 +1596,7 @@ void VG_(redir_initialise) ( void )
 #     endif
    }
 
-#  elif defined(VGP_x86_freebsd) || defined(VGP_amd64_freebsd)
+#  elif defined(VGP_x86_freebsd) || defined(VGP_amd64_freebsd) || defined(VGP_arm64_freebsd)
 /* XXX do something real if needed */
 #  elif defined(VGP_x86_darwin)
    /* If we're using memcheck, use these intercepts right from
@@ -1675,6 +1713,25 @@ void VG_(redir_initialise) ( void )
       add_hardwired_spec(
          "ld.so.1", "index",
          (Addr)&VG_(nanomips_linux_REDIR_FOR_index),
+         complain_about_stripped_glibc_ldso
+      );
+   }
+
+#  elif defined(VGP_riscv64_linux)
+   if (0==VG_(strcmp)("Memcheck", VG_(details).name)) {
+      add_hardwired_spec(
+         "ld-linux-riscv64-lp64d.so.1", "strlen",
+         (Addr)&VG_(riscv64_linux_REDIR_FOR_strlen),
+         complain_about_stripped_glibc_ldso
+      );
+      add_hardwired_spec(
+         "ld-linux-riscv64-lp64d.so.1", "index",
+         (Addr)&VG_(riscv64_linux_REDIR_FOR_index),
+         complain_about_stripped_glibc_ldso
+      );
+      add_hardwired_spec(
+         "ld-linux-riscv64-lp64d.so.1", "strcmp",
+         (Addr)&VG_(riscv64_linux_REDIR_FOR_strcmp),
          complain_about_stripped_glibc_ldso
       );
    }

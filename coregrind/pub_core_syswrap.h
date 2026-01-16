@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -104,6 +104,12 @@ extern void VG_(track_client_dataseg)(ThreadId tid);
 #if defined(VGO_freebsd)
 extern Bool VG_(get_capability_mode)(void);
 #endif
+
+// For the core errors
+extern Bool fd_eq_Error (VgRes, const Error*, const Error*);
+extern void fd_before_pp_Error (const Error*);
+extern void fd_pp_Error (const Error*);
+extern UInt fd_update_extra (const Error*);
 
 #endif   // __PUB_CORE_SYSWRAP_H
 

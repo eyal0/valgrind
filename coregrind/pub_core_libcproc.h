@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -88,7 +88,6 @@ extern void VG_(do_atfork_child)  ( ThreadId tid );
 #if defined(VGO_freebsd)
 // sysctlbyname, getosreldate, is32on64
 extern Int VG_(sysctlbyname)(const HChar *name, void *oldp, SizeT *oldlenp, const void *newp, SizeT newlen);
-extern Int VG_(getosreldate)(void);
 extern Bool VG_(is32on64)(void);
 
 struct auxv {

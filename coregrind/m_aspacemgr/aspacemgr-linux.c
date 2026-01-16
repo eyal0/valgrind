@@ -16,7 +16,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -332,7 +332,6 @@ static Addr aspacem_cStart = 0;
 // Where aspacem will start looking for Valgrind space
 static Addr aspacem_vStart = 0;
 
-
 #define AM_SANITY_CHECK                                      \
    do {                                                      \
       if (VG_(clo_sanity_level) >= 3)                        \
@@ -632,7 +631,10 @@ static Bool sane_NSegment ( const NSegment* s )
       case SkAnonC: case SkAnonV: case SkShmC:
          return 
             s->smode == SmFixed 
-            && s->dev == 0 && s->ino == 0 && s->offset == 0 && s->fnIdx == -1
+#if !defined(VGO_darwin) // on macOS we use ino as the vm_tag holder
+            && s->ino == 0
+#endif
+            && s->dev == 0 && s->offset == 0 && s->fnIdx == -1
             && (s->kind==SkAnonC ? True : !s->isCH);
 
       case SkFileC: case SkFileV:
@@ -860,11 +862,28 @@ static void sync_check_mapping_callback ( Addr addr, SizeT len, UInt prot,
       if (nsegments[i].hasW) seg_prot |= VKI_PROT_WRITE;
       if (nsegments[i].hasX) seg_prot |= VKI_PROT_EXEC;
 
+#if defined(VGO_darwin)
+      // GrP fixme kernel info doesn't have dev/inode
+      // FIXME PJF but now ino is being used for vm tag
+      cmp_devino = False;
+
+      // GrP fixme V and kernel don't agree on offsets
+      cmp_offsets = False;
+#elif defined(VGO_freebsd)
+      cmp_offsets
+         = nsegments[i].kind == SkFileC || nsegments[i].kind == SkFileV;
+      cmp_offsets &= ignore_offset;
+
+      cmp_devino
+         = nsegments[i].dev != 0 || nsegments[i].ino != 0;
+      cmp_devino &= ignore_offset;
+#else
       cmp_offsets
          = nsegments[i].kind == SkFileC || nsegments[i].kind == SkFileV;
 
       cmp_devino
          = nsegments[i].dev != 0 || nsegments[i].ino != 0;
+#endif
 
       /* Consider other reasons to not compare dev/inode */
 #if defined(VGO_linux)
@@ -876,14 +895,19 @@ static void sync_check_mapping_callback ( Addr addr, SizeT len, UInt prot,
       /* hack apparently needed on MontaVista Linux */
       if (filename && VG_(strstr)(filename, "/.lib-ro/"))
          cmp_devino = False;
-#endif
 
-#if defined(VGO_darwin) || defined(VGO_freebsd)
-      // GrP fixme kernel info doesn't have dev/inode
-      cmp_devino = False;
-      
-      // GrP fixme V and kernel don't agree on offsets
-      cmp_offsets = False;
+      /* On linux systems we want to avoid dev/inode check on btrfs,
+         we can use the statfs call for that, except on nanomips
+         (which also doesn't have a sys_fstatfs syswrap).
+         See https://bugs.kde.org/show_bug.cgi?id=317127 */
+#if !defined(VGP_nanomips_linux)
+      struct vki_statfs statfs = {0};
+      SysRes res = VG_(do_syscall2)(__NR_statfs, (UWord)filename,
+                                    (UWord)&statfs);
+      if (!sr_isError(res) && statfs.f_type == VKI_BTRFS_SUPER_MAGIC) {
+         cmp_devino = False;
+      }
+#endif
 #endif
       
       /* If we are doing sloppy execute permission checks then we
@@ -1431,6 +1455,11 @@ void split_nsegments_lo_and_hi ( Addr sLo, Addr sHi,
    /* Not that I'm overly paranoid or anything, definitely not :-) */
 }
 
+#if defined(VGO_darwin)
+#include "pub_core_tooliface.h"
+
+static void fill_segment(NSegment* seg);
+#endif
 
 /* Add SEG to the collection, deleting/truncating any it overlaps.
    This deals with all the tricky cases of splitting up segments as
@@ -1443,6 +1472,12 @@ static void add_segment ( const NSegment* seg )
 
    Addr sStart = seg->start;
    Addr sEnd   = seg->end;
+
+#if defined(VGO_darwin)
+   // FIXME: adding for all segments causes some failures and alignment crashes in leak check
+   // need to debug more
+   //fill_segment((NSegment*) (Addr) seg);
+#endif
 
    aspacem_assert(sStart <= sEnd);
    aspacem_assert(VG_IS_PAGE_ALIGNED(sStart));
@@ -1578,6 +1613,10 @@ static void read_maps_callback ( Addr addr, SizeT len, UInt prot,
       seg.fnIdx = ML_(am_allocate_segname)( filename );
 
    if (0) show_nsegment( 2,0, &seg );
+#if defined(VGO_darwin)
+   // FIXME this is the one that causes problems with leak checks
+   //fill_segment( &seg );
+#endif
    add_segment( &seg );
 }
 
@@ -1639,12 +1678,12 @@ Addr VG_(am_startup) ( Addr sp_at_startup )
    // --- Darwin -------------------------------------------
 #if defined(VGO_darwin)
 
-# if VG_WORDSIZE == 4
+#if defined(VGP_x86_darwin)
    aspacem_maxAddr = (Addr) 0xffffffff;
 
    aspacem_cStart = aspacem_minAddr;
    aspacem_vStart = 0xf0000000;  // 0xc0000000..0xf0000000 available
-# else
+#elif defined(VGP_amd64_darwin)
    aspacem_maxAddr = (Addr) 0x7fffffffffff;
 
    aspacem_cStart = aspacem_minAddr;
@@ -1687,9 +1726,6 @@ Addr VG_(am_startup) ( Addr sp_at_startup )
    // and fills the space up to the end of the segment
    // see man mmap
 
-   // Version number from
-   // https://www.freebsd.org/doc/en_US.ISO8859-1/books/porters-handbook/versions-10.html
-
    // On x86 this is 0x3FE0000
    // And on amd64 it is 0x1FFE0000 (536739840)
    // There is less of an issue on amd64 as we just choose some arbitrary address rather then trying
@@ -1702,30 +1738,45 @@ Addr VG_(am_startup) ( Addr sp_at_startup )
    // This seems to be in the sysctl kern.sgrowsiz
    // Then there is kern.maxssiz which is the total stack size (grow size + guard area)
    // In other words guard area = maxssiz - sgrowsiz
+   //
+   // Unfortunately there isn't a maxssiz32 for x86 on amd64
+   // That means x86 on amd64 gets the amd64 stack size of 512M
+   // which is really quite big for the x86 address space
+   // so we can't use these syscalls. Maybe one day when all supported platforms
+   // have them.
 
-#if (__FreeBSD_version >= 1003516)
+   // on amd64 we have oodles of space and just shove the new stack somewhere out of the way
+   // x86 is far more constrained, and we put the new stack just below the stack passed in to V
+   // except that it has stack space and the growth stack guard below it as decribed above
+   // so we need to skip over the existing stack/growth area on x86
 
-#if 0
-   // this block implements what is described above
-   // this makes no changes to the regression tests
-   // I'm keeping it for a rainy day.
-   // note this needs
-   // #include "pub_core_libcproc.h"
-   SizeT kern_maxssiz;
-   SizeT kern_sgrowsiz;
-   SizeT sysctl_size = sizeof(SizeT);
-   VG_(sysctlbyname)("kern.maxssiz", &kern_maxssiz, &sysctl_size, NULL, 0);
-   VG_(sysctlbyname)("kern.sgrowsiz", &kern_sgrowsiz, &sysctl_size, NULL, 0);
-
-   suggested_clstack_end = aspacem_maxAddr - (kern_maxssiz - kern_sgrowsiz) + VKI_PAGE_SIZE;
-#endif
-
+# if VG_WORDSIZE == 4
    suggested_clstack_end = aspacem_maxAddr - 64*1024*1024UL
                                            + VKI_PAGE_SIZE;
-
 #else
-   suggested_clstack_end = aspacem_maxAddr - 16*1024*1024UL
-                                           + VKI_PAGE_SIZE;
+
+   SizeT kern_maxssiz;
+   //SizeT kern_sgrowsiz;
+   SizeT sysctl_size = sizeof(SizeT);
+   VG_(sysctlbyname)("kern.maxssiz", &kern_maxssiz, &sysctl_size, NULL, 0);
+   if (kern_maxssiz < 64*1024*1024UL) {
+      kern_maxssiz = 64*1024*1024UL;
+      VG_(debugLog)(2, "aspacem",
+                    "        max stack size (maxssiz) set to lower limit, 64Mb\n");
+   }
+   //VG_(sysctlbyname)("kern.sgrowsiz", &kern_sgrowsiz, &sysctl_size, NULL, 0);
+   // initially this was aspacem_maxAddr - (kern_maxssiz - kern_sgrowsiz) + VKI_PAGE_SIZE
+   // but we're not using / respecting the stack grow size (yet)
+   suggested_clstack_end = aspacem_maxAddr - (kern_maxssiz) + VKI_PAGE_SIZE;
+   VG_(debugLog)(2, "aspacem",
+                 "        max stack size (maxssiz) = 0x%lx\n",
+                 kern_maxssiz);
+   //VG_(debugLog)(2, "aspacem",
+   //              "        stack grow size (sgrowsiz) = 0x%lx\n",
+   //              kern_sgrowsiz);
+   VG_(debugLog)(2, "aspacem",
+                 "        suggested client stack end (aspacem_maxAddr - (kern_maxssiz) + VKI_PAGE_SIZE) = 0x%lx\n",
+                 suggested_clstack_end);
 
 #endif
 
@@ -1878,10 +1929,16 @@ Addr VG_(am_startup) ( Addr sp_at_startup )
 
    if (aspacem_cStart > Addr_MIN) {
       init_resvn(&seg, Addr_MIN, aspacem_cStart-1);
+#if defined(VGO_darwin)
+      fill_segment( &seg );
+#endif
       add_segment(&seg);
    }
    if (aspacem_maxAddr < Addr_MAX) {
       init_resvn(&seg, aspacem_maxAddr+1, Addr_MAX);
+#if defined(VGO_darwin)
+      fill_segment( &seg );
+#endif
       add_segment(&seg);
    }
 
@@ -1891,6 +1948,9 @@ Addr VG_(am_startup) ( Addr sp_at_startup )
       valgrind allocations at the boundary, this is kind of necessary
       in order to get it to start allocating in the right place. */
    init_resvn(&seg, aspacem_vStart,  aspacem_vStart + VKI_PAGE_SIZE - 1);
+#if defined(VGO_darwin)
+   fill_segment( &seg );
+#endif
    add_segment(&seg);
 
    VG_(am_show_nsegments)(2, "Initial layout");
@@ -2278,6 +2338,9 @@ VG_(am_notify_client_mmap)( Addr a, SizeT len, UInt prot, UInt flags,
       seg.isFF = (flags & VKI_MAP_FIXED);
 #endif
    }
+#if defined(VGO_darwin)
+   fill_segment( &seg );
+#endif
    add_segment( &seg );
    AM_SANITY_CHECK;
    return needDiscard;
@@ -2309,6 +2372,9 @@ VG_(am_notify_client_shmat)( Addr a, SizeT len, UInt prot )
    seg.hasR   = toBool(prot & VKI_PROT_READ);
    seg.hasW   = toBool(prot & VKI_PROT_WRITE);
    seg.hasX   = toBool(prot & VKI_PROT_EXEC);
+#if defined(VGO_darwin)
+   fill_segment( &seg );
+#endif
    add_segment( &seg );
    AM_SANITY_CHECK;
    return needDiscard;
@@ -2409,6 +2475,9 @@ Bool VG_(am_notify_munmap)( Addr start, SizeT len )
    else
       seg.kind = SkFree;
 
+#if defined(VGO_darwin)
+   fill_segment( &seg );
+#endif
    add_segment( &seg );
 
    /* Unmapping could create two adjacent free segments, so a preen is
@@ -2521,6 +2590,9 @@ SysRes VG_(am_mmap_named_file_fixed_client_flags)
 #if defined(VGO_freebsd)
    seg.isFF = (flags & VKI_MAP_FIXED);
 #endif
+#if defined(VGO_darwin)
+   fill_segment( &seg );
+#endif
    add_segment( &seg );
 
    AM_SANITY_CHECK;
@@ -2579,6 +2651,9 @@ SysRes VG_(am_mmap_anon_fixed_client) ( Addr start, SizeT length, UInt prot )
    seg.hasR  = toBool(prot & VKI_PROT_READ);
    seg.hasW  = toBool(prot & VKI_PROT_WRITE);
    seg.hasX  = toBool(prot & VKI_PROT_EXEC);
+#if defined(VGO_darwin)
+   fill_segment( &seg );
+#endif
    add_segment( &seg );
 
    AM_SANITY_CHECK;
@@ -2638,6 +2713,9 @@ static SysRes am_mmap_anon_float_client ( SizeT length, Int prot, Bool isCH )
    seg.hasW  = toBool(prot & VKI_PROT_WRITE);
    seg.hasX  = toBool(prot & VKI_PROT_EXEC);
    seg.isCH  = isCH;
+#if defined(VGO_darwin)
+   fill_segment( &seg );
+#endif
    add_segment( &seg );
 
    AM_SANITY_CHECK;
@@ -2740,6 +2818,9 @@ SysRes VG_(am_mmap_anon_float_valgrind)( SizeT length )
    seg.hasR  = True;
    seg.hasW  = True;
    seg.hasX  = True;
+#if defined(VGO_darwin)
+   fill_segment( &seg );
+#endif
    add_segment( &seg );
 
    AM_SANITY_CHECK;
@@ -2832,6 +2913,9 @@ static SysRes VG_(am_mmap_file_float_valgrind_flags) ( SizeT length, UInt prot,
    }
 #if defined(VGO_freebsd)
    seg.isFF = (flags & VKI_MAP_FIXED);
+#endif
+#if defined(VGO_darwin)
+   fill_segment( &seg );
 #endif
    add_segment( &seg );
 
@@ -3054,6 +3138,9 @@ Bool VG_(am_create_reservation) ( Addr start, SizeT length,
                            reservation. */
    seg.end   = end1;
    seg.smode = smode;
+#if defined(VGO_darwin)
+   fill_segment( &seg );
+#endif
    add_segment( &seg );
 
    AM_SANITY_CHECK;
@@ -3227,6 +3314,9 @@ const NSegment *VG_(am_extend_map_client)( Addr addr, SizeT delta )
 
    NSegment seg_copy = *seg;
    seg_copy.end += delta;
+#if defined(VGO_darwin)
+   fill_segment( &seg );
+#endif
    add_segment( &seg_copy );
 
    if (0)
@@ -3300,6 +3390,9 @@ Bool VG_(am_relocate_nooverlap_client)( /*OUT*/Bool* need_discard,
    }
    seg.start = new_addr;
    seg.end   = new_addr + new_len - 1;
+#if defined(VGO_darwin)
+   fill_segment( &seg );
+#endif
    add_segment( &seg );
 
    /* Create a free hole in the old location. */
@@ -3315,6 +3408,9 @@ Bool VG_(am_relocate_nooverlap_client)( /*OUT*/Bool* need_discard,
    else
       seg.kind = SkFree;
 
+#if defined(VGO_darwin)
+   fill_segment( &seg );
+#endif
    add_segment( &seg );
 
    AM_SANITY_CHECK;
@@ -3660,6 +3756,7 @@ static void parse_procselfmaps (
 #elif defined(VGO_darwin)
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#include <libproc.h>
 
 static unsigned int mach2vki(unsigned int vm_prot)
 {
@@ -3667,6 +3764,353 @@ static unsigned int mach2vki(unsigned int vm_prot)
       ((vm_prot & VM_PROT_READ)    ? VKI_PROT_READ    : 0) |
       ((vm_prot & VM_PROT_WRITE)   ? VKI_PROT_WRITE   : 0) |
       ((vm_prot & VM_PROT_EXECUTE) ? VKI_PROT_EXEC    : 0) ;
+}
+
+static Int get_filename_for_region(int pid, Addr addr, HChar* path, SizeT path_len, ULong* vm_tag) {
+  int ret;
+  SizeT len;
+  struct proc_regionwithpathinfo info;
+  VG_(memset)(&info, 0, sizeof(info));
+  ret = sr_Res(VG_(do_syscall6)(__NR_proc_info, 2, pid, PROC_PIDREGIONPATHINFO, addr, (Addr)&info, sizeof(info)));
+  if (ret == -1) {
+    return ret;
+  }
+  if (vm_tag) {
+    *vm_tag = info.prp_prinfo.pri_user_tag;
+  }
+  len = VG_(strlen)(&info.prp_vip.vip_path[0]);
+  if (len == 0) {
+    return 0;
+  }
+  len += 1; // include the null terminator
+  if (len > path_len) {
+    len = path_len;
+  }
+  VG_(strlcpy)(path, info.prp_vip.vip_path, len);
+  return len;
+}
+
+static Bool get_name_from_tag(int tag, HChar* path, SizeT path_len) {
+  switch (tag) {
+    case VKI_VM_MEMORY_DYLD:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[internal dyld memory]", path_len);
+      return True;
+    case VKI_VM_MEMORY_OS_ALLOC_ONCE:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[kernel alloc once]", path_len);
+      return True;
+    case VKI_VM_MEMORY_GENEALOGY:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[activity tracing]", path_len);
+      return True;
+    case VKI_VM_MEMORY_BRK:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[brk]", path_len);
+      return True;
+    case VKI_VM_MEMORY_MALLOC:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[malloc memory]", path_len);
+      return True;
+    case VKI_VM_MEMORY_MALLOC_HUGE:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[malloc (huge) memory]", path_len);
+      return True;
+    case VKI_VM_MEMORY_MALLOC_LARGE:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[malloc (large) memory]", path_len);
+      return True;
+    case VKI_VM_MEMORY_MALLOC_SMALL:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[malloc (small) memory]", path_len);
+      return True;
+    case VKI_VM_MEMORY_MALLOC_TINY:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[malloc (tiny) memory]", path_len);
+      return True;
+    case VKI_VM_MEMORY_MALLOC_NANO:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[malloc (nano) memory]", path_len);
+      return True;
+    case VM_MEMORY_MACH_MSG:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[mach message]", path_len);
+      return True;
+    case VKI_VM_MEMORY_ANALYSIS_TOOL:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[analysis tool]", path_len);
+      return True;
+    case VKI_VM_MEMORY_STACK:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[stack]", path_len);
+      return True;
+    case VKI_VM_MEMORY_SHARED_PMAP:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[shared pmap]", path_len);
+      return True;
+    case VKI_VM_MEMORY_UNSHARED_PMAP:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[unshared pmap]", path_len);
+      return True;
+    case VKI_VM_MEMORY_REALLOC:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[realloc]", path_len);
+      break;
+    case VKI_VM_MEMORY_MALLOC_LARGE_REUSABLE:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[malloc (large, reusable) memory]", path_len);
+      break;
+    case VKI_VM_MEMORY_MALLOC_LARGE_REUSED:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[malloc (large, reused) memory]", path_len);
+      break;
+    case VKI_VM_MEMORY_MALLOC_MEDIUM:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[malloc (medium) memory]", path_len);
+      break;
+    case VKI_VM_MEMORY_MALLOC_PROB_GUARD:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[malloc prob guard]", path_len);
+      break;
+    case VKI_VM_MEMORY_IOKIT:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[iokit]", path_len);
+      break;
+    case VKI_VM_MEMORY_GUARD:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[guard]", path_len);
+      break;
+    case VKI_VM_MEMORY_DYLIB:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[dylib]", path_len);
+      break;
+    case VKI_VM_MEMORY_OBJC_DISPATCHERS:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[objc dispatchers]", path_len);
+      break;
+    case VKI_VM_MEMORY_APPKIT:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[appkit]", path_len);
+      break;
+    case VKI_VM_MEMORY_FOUNDATION:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[foundation]", path_len);
+      break;
+    case VKI_VM_MEMORY_COREGRAPHICS:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[core graphics]", path_len);
+      break;
+    case VKI_VM_MEMORY_CORESERVICES:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[core services]", path_len);
+      break;
+    case VKI_VM_MEMORY_JAVA:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[java]", path_len);
+      break;
+    case VKI_VM_MEMORY_COREDATA:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[core data]", path_len);
+      break;
+    case VKI_VM_MEMORY_COREDATA_OBJECTIDS:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[core data object ids]", path_len);
+      break;
+    case VKI_VM_MEMORY_ATS:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[ats]", path_len);
+      break;
+    case VKI_VM_MEMORY_LAYERKIT:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[layer kit]", path_len);
+      break;
+    case VKI_VM_MEMORY_CGIMAGE:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[core graphics image]", path_len);
+      break;
+    case VKI_VM_MEMORY_TCMALLOC:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[tcmalloc]", path_len);
+      break;
+    case VKI_VM_MEMORY_COREGRAPHICS_DATA:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[core graphics data]", path_len);
+      break;
+    case VKI_VM_MEMORY_COREGRAPHICS_SHARED:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[core graphics shared]", path_len);
+      break;
+    case VKI_VM_MEMORY_COREGRAPHICS_FRAMEBUFFERS:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[core graphics framebuffers]", path_len);
+      break;
+    case VKI_VM_MEMORY_COREGRAPHICS_BACKINGSTORES:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[core graphics backing stores]", path_len);
+      break;
+    case VKI_VM_MEMORY_COREGRAPHICS_XALLOC:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[core graphics xalloc]", path_len);
+      break;
+    case VKI_VM_MEMORY_DYLD_MALLOC:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[dyld malloc]", path_len);
+      break;
+    case VKI_VM_MEMORY_SQLITE:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[sqlite]", path_len);
+      break;
+    case VKI_VM_MEMORY_JAVASCRIPT_CORE:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[javascript core]", path_len);
+      break;
+    case VKI_VM_MEMORY_JAVASCRIPT_JIT_EXECUTABLE_ALLOCATOR:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[javascript jit executable allocator]", path_len);
+      break;
+    case VKI_VM_MEMORY_JAVASCRIPT_JIT_REGISTER_FILE:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[javascript jit register file]", path_len);
+      break;
+    case VKI_VM_MEMORY_GLSL:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[glsl]", path_len);
+      break;
+    case VKI_VM_MEMORY_OPENCL:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[opencl]", path_len);
+      break;
+    case VKI_VM_MEMORY_COREIMAGE:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[core image]", path_len);
+      break;
+    case VKI_VM_MEMORY_WEBCORE_PURGEABLE_BUFFERS:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[webcore purgeable buffers]", path_len);
+      break;
+    case VKI_VM_MEMORY_IMAGEIO:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[imageio]", path_len);
+      break;
+    case VKI_VM_MEMORY_COREPROFILE:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[core profile]", path_len);
+      break;
+    case VKI_VM_MEMORY_ASSETSD:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[assetsd]", path_len);
+      break;
+    case VKI_VM_MEMORY_LIBDISPATCH:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[libdispatch]", path_len);
+      break;
+    case VKI_VM_MEMORY_ACCELERATE:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[accelerate]", path_len);
+      break;
+    case VKI_VM_MEMORY_COREUI:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[core ui]", path_len);
+      break;
+    case VKI_VM_MEMORY_COREUIFILE:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[core ui file]", path_len);
+      break;
+    case VKI_VM_MEMORY_RAWCAMERA:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[raw camera]", path_len);
+      break;
+    case VKI_VM_MEMORY_CORPSEINFO:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[corpse info]", path_len);
+      break;
+    case VKI_VM_MEMORY_ASL:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[asl]", path_len);
+      break;
+    case VKI_VM_MEMORY_SWIFT_RUNTIME:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[swift runtime]", path_len);
+      break;
+    case VKI_VM_MEMORY_SWIFT_METADATA:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[swift metadata]", path_len);
+      break;
+    case VKI_VM_MEMORY_DHMM:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[dhmm]", path_len);
+      break;
+    case VKI_VM_MEMORY_SCENEKIT:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[scene kit]", path_len);
+      break;
+    case VKI_VM_MEMORY_SKYWALK:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[skywalk]", path_len);
+      break;
+    case VKI_VM_MEMORY_IOSURFACE:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[io surface]", path_len);
+      break;
+    case VKI_VM_MEMORY_LIBNETWORK:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[libnetwork]", path_len);
+      break;
+    case VKI_VM_MEMORY_AUDIO:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[audio]", path_len);
+      break;
+    case VKI_VM_MEMORY_VIDEOBITSTREAM:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[video bitstream]", path_len);
+      break;
+    case VKI_VM_MEMORY_CM_XPC:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[cm xpc]", path_len);
+      break;
+    case VKI_VM_MEMORY_CM_RPC:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[cm rpc]", path_len);
+      break;
+    case VKI_VM_MEMORY_CM_MEMORYPOOL:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[cm memory pool]", path_len);
+      break;
+    case VKI_VM_MEMORY_CM_READCACHE:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[cm read cache]", path_len);
+      break;
+    case VKI_VM_MEMORY_CM_CRABS:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[cm crabs]", path_len);
+      break;
+    case VKI_VM_MEMORY_QUICKLOOK_THUMBNAILS:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[quicklook thumbnails]", path_len);
+      break;
+    case VKI_VM_MEMORY_ACCOUNTS:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[accounts]", path_len);
+      break;
+    case VKI_VM_MEMORY_SANITIZER:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[sanitizer]", path_len);
+      break;
+    case VKI_VM_MEMORY_IOACCELERATOR:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[io accelerator]", path_len);
+      break;
+    case VKI_VM_MEMORY_CM_REGWARP:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[cm regwarp]", path_len);
+      break;
+    case VKI_VM_MEMORY_EAR_DECODER:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[ear decoder]", path_len);
+      break;
+    case VKI_VM_MEMORY_COREUI_CACHED_IMAGE_DATA:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[core ui cached image data]", path_len);
+      break;
+    case VKI_VM_MEMORY_COLORSYNC:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[color sync]", path_len);
+      break;
+    case VKI_VM_MEMORY_BTINFO:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[bt info]", path_len);
+      break;
+    case VKI_VM_MEMORY_CM_HLS:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[cm hls]", path_len);
+      break;
+    case VKI_VM_MEMORY_ROSETTA:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[rosetta]", path_len);
+      break;
+    case VKI_VM_MEMORY_ROSETTA_THREAD_CONTEXT:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[rosetta thread context]", path_len);
+      break;
+    case VKI_VM_MEMORY_ROSETTA_INDIRECT_BRANCH_MAP:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[rosetta indirect branch map]", path_len);
+      break;
+    case VKI_VM_MEMORY_ROSETTA_RETURN_STACK:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[rosetta return stack]", path_len);
+      break;
+    case VKI_VM_MEMORY_ROSETTA_EXECUTABLE_HEAP:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[rosetta executable heap]", path_len);
+      break;
+    case VKI_VM_MEMORY_ROSETTA_USER_LDT:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[rosetta user ldt]", path_len);
+      break;
+    case VKI_VM_MEMORY_ROSETTA_ARENA:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[rosetta arena]", path_len);
+      break;
+    case VKI_VM_MEMORY_ROSETTA_10:
+      VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[rosetta 10]", path_len);
+      break;
+    case VKI_VM_MEMORY_VALGRIND:
+    case 0:
+      return False;
+    default:
+      if (tag >= VKI_VM_MEMORY_APPLICATION_SPECIFIC_1 && tag <= VKI_VM_MEMORY_APPLICATION_SPECIFIC_16) {
+        VG_(strlcpy)(path, DARWIN_FAKE_MEMORY_PATH "[application specific]", path_len);
+        return True;
+      }
+      VG_(debugLog)(0, "aspacem", "unknown vm tag: %d\n", tag);
+      return False;
+  }
+  return True;
+}
+
+static void fill_segment(NSegment* seg) {
+  Int pid;
+  HChar name[VKI_PATH_MAX];
+  Int ret;
+
+  if (seg->fnIdx != -1 || seg->kind == SkFree || seg->kind == SkResvn) {
+    return;
+  }
+
+  pid = sr_Res(VG_(do_syscall0)(__NR_getpid));
+  ret = get_filename_for_region(pid, seg->start, name, sizeof(name), &seg->ino);
+  if (ret != 0) {
+    if (ret == -1) {
+      return;
+    }
+  } else if (get_name_from_tag(seg->ino, name, sizeof(name))) {
+    // these are owned by the kernel and are already initialized
+    // we flag them as client so m_main.c track them correctly
+    seg->kind = SkFileC;
+  } else {
+    return;
+  }
+  seg->fnIdx = ML_(am_allocate_segname)( name );
+}
+
+static Bool endswith(const HChar* str, const HChar* suffix) {
+  SizeT str_len = VG_(strlen)(str);
+  SizeT suffix_len = VG_(strlen)(suffix);
+  if (str_len < suffix_len) {
+    return False;
+  }
+  return VG_(strcmp)(str + str_len - suffix_len, suffix) == 0;
 }
 
 static UInt stats_machcalls = 0;
@@ -3681,13 +4125,16 @@ static void parse_procselfmaps (
    vm_address_t iter;
    unsigned int depth;
    vm_address_t last;
+   HChar name[VKI_PATH_MAX];
+   Bool ret;
+   Int pid = sr_Res(VG_(do_syscall0)(__NR_getpid));
 
    iter = 0;
    depth = 0;
    last = 0;
    while (1) {
       mach_vm_address_t addr = iter;
-      mach_vm_size_t size;
+      mach_vm_size_t size = 0;
       vm_region_submap_short_info_data_64_t info;
       kern_return_t kr;
 
@@ -3707,12 +4154,19 @@ static void parse_procselfmaps (
       }
       iter = addr + size;
 
+      // FIXME: not sure we should fill up anything here as it will added later anyway
+      ret = get_filename_for_region(pid, addr, name, sizeof(name), NULL);
+      if (!ret) {
+        ret = get_name_from_tag(info.user_tag, name, sizeof(name));
+      }
+
+
       if (addr > last  &&  record_gap) {
          (*record_gap)(last, addr - last);
       }
       if (record_mapping) {
          (*record_mapping)(addr, size, mach2vki(info.protection),
-                           0, 0, info.offset, NULL, False);
+                           0, info.user_tag, info.offset, ret ? name : NULL, False);
       }
       last = addr + size;
    }
@@ -3732,7 +4186,7 @@ static Addr Addr__min ( Addr a, Addr b ) { return a < b ? a : b; }
 
 static void add_mapping_callback(Addr addr, SizeT len, UInt prot, 
                                  ULong dev, ULong ino, Off64T offset, 
-                                 const HChar *filename)
+                                 const HChar *filename, Bool ignore_offset)
 {
    // derived from sync_check_mapping_callback()
 
@@ -3906,6 +4360,74 @@ Bool VG_(get_changed_segments)(
 #elif defined(VGO_freebsd)
 
 /*
+ * Some more nasty hacks.
+ *
+ * On FreeBSD mmap with MAP_STACK will result in TWO adjacent areas being mapped.
+ * Assuming a grow down stack, the one in the lower address is a growth guard
+ * area. The one in the higher area is the stack. The kernel will automatically
+ * extend the stack into the growth guard. Valgrind doesn't see any of that.
+ * When we see mapped memory like that, we need to try to merge them so that
+ * they match the mmap that Valgrind saw and recorded.
+ *
+ * There is also the initial stack. Valgrind will have already recorded that
+ * with parse_procselfmaps. So we don't want to merge that.
+ */
+static char* maybe_merge_procmap_stack(char* p,  struct vki_kinfo_vmentry *kve, Addr* pEndPlusOne, UInt* pProt)
+{
+   static Bool sgrowsiz_read = False;
+   static SizeT kern_sgrowsiz;
+   if (!sgrowsiz_read) {
+      SizeT sysctl_size = sizeof(SizeT);
+      VG_(sysctlbyname)("kern.sgrowsiz", &kern_sgrowsiz, &sysctl_size, NULL, 0);
+      sgrowsiz_read = True;
+   }
+   char* p_next = p + kve->kve_structsize;
+   struct vki_kinfo_vmentry *kve_next = (struct vki_kinfo_vmentry *)(p_next);
+
+#if defined(VGP_amd64_freebsd)
+   // I think that this is the stacksize rlimit
+   // I could use sysctl kern.maxssiz for this
+   if ( *pEndPlusOne + kern_sgrowsiz - kve->kve_start == 512ULL*1024ULL*1024ULL) {
+      return p;
+   }
+#elif defined(VGP_x86_freebsd)
+   // sysctl kern.maxssiz OK for x86 on x86 but not x86 on amd64
+   if ( *pEndPlusOne + kern_sgrowsiz - kve->kve_start == 64ULL*1024ULL*1024ULL) {
+      return p;
+   }
+#elif defined(VGP_arm64_freebsd)
+   if ( *pEndPlusOne + kern_sgrowsiz - kve->kve_start == 1024ULL*1024ULL*1024ULL) {
+      return p;
+   }
+#else
+#    error Unknown platform
+#endif
+
+   while (kve_next->kve_protection & VKI_KVME_PROT_READ &&
+          kve_next->kve_protection & VKI_KVME_PROT_WRITE &&
+          kve_next->kve_flags & VKI_KVME_FLAG_GROWS_DOWN &&
+          kve_next->kve_end - kve_next->kve_start == kern_sgrowsiz) {
+
+
+      *pEndPlusOne += kern_sgrowsiz;
+      if (kve_next->kve_protection & VKI_KVME_PROT_READ) {
+         *pProt |= VKI_PROT_READ;
+      }
+      if (kve_next->kve_protection & VKI_KVME_PROT_WRITE) {
+         *pProt |= VKI_PROT_WRITE;
+      }
+      if (kve_next->kve_protection & VKI_KVME_PROT_EXEC) {
+         *pProt |= VKI_PROT_EXEC;
+      }
+      p_next += kve->kve_structsize;
+      kve_next = (struct vki_kinfo_vmentry *)(p_next);
+   }
+   p_next -= kve->kve_structsize;
+   return p_next;
+}
+
+
+/*
  * PJF 2023-09-23
  *
  * This function is somewhat badly named for FreeBSD, where the
@@ -3927,7 +4449,7 @@ Bool VG_(get_changed_segments)(
  * the RW PT_LOAD.
  *
  * For instance, objdump -p for memcheck-amd64-freebsd contains
- *     LOAD off    0x0000000000000000 vaddr 0x0000000038000000 paddr 0x0000000038000000 align 2**12
+ *    LOAD off    0x0000000000000000 vaddr 0x0000000038000000 paddr 0x0000000038000000 align 2**12
  *         filesz 0x00000000000c5124 memsz 0x00000000000c5124 flags r--
  *    LOAD off    0x00000000000c5130 vaddr 0x00000000380c6130 paddr 0x00000000380c6130 align 2**12
  *         filesz 0x00000000001b10df memsz 0x00000000001b10df flags r-x
@@ -3982,6 +4504,17 @@ static void parse_procselfmaps (
    Int    oid[4];
    SysRes sres;
    Int map_count = 0;
+   // this assumes that compiling with clang uses ld.lld which produces 3 LOAD segements
+   // and that compiling with GCC uses ld.bfd which produces 2 LOAD segments
+#if defined(__clang__)
+   Int const rx_map = 1;
+   Int const rw_map = 2;
+#elif defined(__GNUC__)
+   Int const rx_map = 0;
+   Int const rw_map = 1;
+#else
+#error("unsupported compiler")
+#endif
    // could copy the whole kinfo_vmentry but it is 1160 bytes
    char   *rx_filename = NULL;
    ULong  rx_dev = 0U;
@@ -4025,7 +4558,7 @@ static void parse_procselfmaps (
 
       map_count = (p - (char *)procmap_buf)/kve->kve_structsize;
 
-      if (tool_read_maps && map_count == 2) {
+      if (tool_read_maps && map_count == rw_map) {
          aspacem_assert((prot & (VKI_PROT_READ | VKI_PROT_WRITE)) == (VKI_PROT_READ | VKI_PROT_WRITE));
          filename = rx_filename;
          dev = rx_dev;
@@ -4036,13 +4569,19 @@ static void parse_procselfmaps (
       if (record_gap && gapStart < start)
          (*record_gap) ( gapStart, start-gapStart );
 
+      if (kve->kve_type == VKI_KVME_TYPE_GUARD &&
+          record_mapping == sync_check_mapping_callback &&
+          VG_(clo_sanity_level) >= 3)  {
+         p = maybe_merge_procmap_stack(p, kve, &endPlusOne, &prot);
+      }
+
       if (record_mapping && start < endPlusOne) {
          (*record_mapping) ( start, endPlusOne-start,
                              prot, dev, ino,
                            foffset, filename, tool_read_maps && map_count == 2 );
       }
 
-      if (tool_read_maps && map_count == 1) {
+      if (tool_read_maps && map_count == rx_map) {
          aspacem_assert((prot & (VKI_PROT_READ | VKI_PROT_EXEC)) == (VKI_PROT_READ | VKI_PROT_EXEC));
          rx_filename = filename;
          rx_dev = dev;
@@ -4052,6 +4591,11 @@ static void parse_procselfmaps (
       }
 
       gapStart = endPlusOne;
+      // PJF I think that we need to walk this based on each entry's kve_structsize
+      // because sysctl kern.coredump_pack_fileinfo (on by default) can cause this
+      // array to be packed (for core dumps)
+      // the packing consists of only storing the used part of kve_path rather than
+      // the full 1024 bytes
       p += kve->kve_structsize;
    }
  

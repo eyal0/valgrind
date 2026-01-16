@@ -25,9 +25,9 @@
 int main(void)
 {
    /* Uninitialised, but we know px[0] is 0x0. */
-   /* PJF why ? */
    long *px = malloc(2*sizeof(long));
    x0 = px[0];
+   const char* running_in_vgtest = getenv("RUNNING_IN_VGTEST");
 
    /* SYS_syscall                 0 */
    /* does this need a specific test? There are two diffeent IDs for syscall, see 198 */
@@ -86,7 +86,7 @@ int main(void)
    SY(SYS_fchdir, x0-1); FAIL;
 
    /* SYS_freebsd11_mknod         14 */
-#if (FREEBSD_VERS >= FREEBSD_12)
+#if defined(SYS_freebsd11_mknod)
    GO(SYS_freebsd11_mknod, "3s 1m");
    SY(SYS_freebsd11_mknod, x0, x0, x0); FAIL;
 #else
@@ -104,7 +104,12 @@ int main(void)
 
    /* break                       17 */
    GO(SYS_break, "1s 1m");
-   SY(SYS_break, x0+1); SUCC;
+   SY(SYS_break, x0+1);
+#if defined(VGP_arm64_freebsd)
+   FAILx(ENOSYS);
+#else
+   SUCC;
+#endif
 
    /* freebsd4 getfsstat          18 */
 
@@ -196,13 +201,17 @@ int main(void)
    GO(SYS_dup, "1s 0m");
    SY(SYS_dup, x0-1); FAIL;
 
+#if !defined(VGP_arm64_freebsd)
    /* freebsd10_pipe              42 */
-#if (FREEBSD_VERS >= FREEBSD_11)
+#if defined(SYS_freebsd10_pipe)
    GO(SYS_freebsd10_pipe, "0s 0m");
    SY(SYS_freebsd10_pipe, x0); SUCC;
 #else
    GO(SYS_pipe, "0s 0m");
    SY(SYS_pipe, x0); SUCC;
+#endif
+#else
+   FAKE_GO(" 42:      SYS_freebsd10_pipe 0s 0m");
 #endif
 
    /* getegid                     43 */
@@ -244,13 +253,12 @@ int main(void)
               char *ss_sp;
               size_t ss_size;
               int ss_flags;
-      } ss;
-      ss.ss_sp     = NULL;
-      ss.ss_flags  = 0;
-      ss.ss_size   = 0;
-      VALGRIND_MAKE_MEM_NOACCESS(& ss, sizeof(struct our_sigaltstack));
-      GO(SYS_sigaltstack, "2s 2m");
-      SY(SYS_sigaltstack, x0+&ss, x0+&ss); SUCC; /* FAIL when run standalone */
+      } ss = { NULL, 0, 0};
+      struct our_sigaltstack oss;
+      VALGRIND_MAKE_MEM_NOACCESS(&ss, sizeof(struct our_sigaltstack));
+      VALGRIND_MAKE_MEM_NOACCESS(&oss, sizeof(struct our_sigaltstack));
+      GO(SYS_sigaltstack, "2s 4m");
+      SY(SYS_sigaltstack, x0+&ss, x0+&oss); FAIL;
    }
 
    /* SYS_ioctl                   54 */
@@ -304,8 +312,15 @@ int main(void)
    /* obsol vwrite                68 */
 
    /* SYS_sbrk                    69 */
+#if defined(SYS_sbrk)
    GO(SYS_sbrk, "1s 1m");
    SY(SYS_sbrk, x0); FAIL;
+#else
+   FAKE_GO(" 69:                SYS_sbrk 1s 1m");
+   FAKE_SY("Syscall param sbrk(incr) contains uninitialised byte(s)\n")
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+#endif
 
    /* not implemented on OS SYS_sstk 70 */
 
@@ -319,8 +334,7 @@ int main(void)
 
    /* SYS_mprotect                74 */
    GO(SYS_mprotect, "3s 0m");
-   /* PJF why does this succeed? */
-   SY(SYS_mprotect, x0+1, x0, x0); SUCC;
+   SY(SYS_mprotect, x0+1, x0-10, x0+9999); FAIL;
 
    /* SYS_madvise                 75 */
    GO(SYS_madvise, "3s 0m");
@@ -334,13 +348,23 @@ int main(void)
    GO(SYS_mincore, "3s 1m");
    SY(SYS_mincore, x0, x0+40960, x0); FAIL;
 
-   /* SYS_getgroups               79 */
+   /* SYS_freeebsd14_getgroups    79 */
+#if defined(SYS_freebsd14_getgroups)
+   GO(SYS_freebsd14_getgroups, "2s 1m");
+   SY(SYS_freebsd14_getgroups, x0+1, x0+1); FAIL;
+#else
    GO(SYS_getgroups, "2s 1m");
    SY(SYS_getgroups, x0+1, x0+1); FAIL;
+#endif
 
-   /* SYS_setgroups               80 */
+   /* SYS_freebsd14_setgroups     80 */
+#if defined(SYS_freebsd14_getgroups)
+   GO(SYS_freebsd14_setgroups, "2s 1m");
+   SY(SYS_freebsd14_setgroups, x0+1, x0+1); FAIL;
+#else
    GO(SYS_setgroups, "2s 1m");
    SY(SYS_setgroups, x0+1, x0+1); FAIL;
+#endif
 
    /* SYS_getpgrp                 81 */
    GO(SYS_getpgrp, "0s 0m");
@@ -358,7 +382,7 @@ int main(void)
 
    /* SYS_swapon                  85 */
    GO(SYS_swapon, "1s 1m");
-   SY(SYS_swapon, x0); FAIL;
+   SY(SYS_swapon, x0+1); FAIL;
 
    /* SYS_getitimer               86 */
    GO(SYS_getitimer, "2s 1m");
@@ -425,8 +449,8 @@ int main(void)
    SY(SYS_bind, x0, x0, x0); FAIL;
 
    /* SYS_setsockopt              105 */
-   GO(SYS_setsockopt, "5s 0m");
-   SY(SYS_setsockopt, x0, x0, x0, x0, x0); FAIL;
+   GO(SYS_setsockopt, "5s 1m");
+   SY(SYS_setsockopt, x0, x0, x0, px+x0, sizeof(socklen_t)+x0); FAIL;
 
    /* SYS_listen                  106 */
    GO(SYS_listen, "2s 0m");
@@ -458,9 +482,18 @@ int main(void)
    GO(SYS_getrusage, "2s 1m");
    SY(SYS_getrusage, x0, x0); FAIL;
 
+   socklen_t *len = malloc(sizeof(socklen_t));
+   *len = 2*sizeof(long)+x0;
+   free(len);
+   /*
+    * Should be 2m but it is hard to trigger an optval
+    * error in the scalar, len needs to be safe to deref
+    * and the syscall needs to succeed to trigger a write
+    * error to optval
+    */
    /* SYS_getsockopt              118 */
-   GO(SYS_setsockopt, "5s 1m");
-   SY(SYS_setsockopt, x0, x0, x0, x0, x0); FAIL;
+   GO(SYS_getsockopt, "5s 1m");
+   SY(SYS_getsockopt, x0, x0, x0, px+x0, len+x0); FAIL;
 
    /* unimpl resuba               119 */
 
@@ -488,11 +521,11 @@ int main(void)
 
    /* SYS_setreuid                126 */
    GO(SYS_setreuid, "2s 0m");
-   SY(SYS_setreuid, x0-1, x0-1); SUCC;
+   SY(SYS_setreuid, x0+1, x0+1); FAIL;
 
    /* SYS_setregid                127 */
    GO(SYS_setregid, "2s 0m");
-   SY(SYS_setregid, x0-1, x0-1); SUCC;
+   SY(SYS_setregid, x0+1, x0+1); FAIL;
 
    /* SYS_rename                  128 */
    GO(SYS_rename, "2s 2m");
@@ -537,8 +570,10 @@ int main(void)
 
    /* SYS_adjtime                 140 */
    GO(SYS_adjtime, "2s 1m");
-   /* succeeds? need non-null arg2 for 2m */
-   SY(SYS_adjtime, x0, x0); SUCC;
+   SY(SYS_adjtime, x0+1, x0); FAIL;
+
+   GO(SYS_adjtime, "2s 2m");
+   SY(SYS_adjtime, x0+1, x0+1); FAIL;
 
    /* 4.3 getpeername             141 */
 
@@ -554,7 +589,12 @@ int main(void)
 
    /* SYS_setsid                  147 */
    GO(SYS_setsid, "0s 0m");
-   SY(SYS_setsid); SUCC; /* FAIL when run standalone */
+   SY(SYS_setsid);
+   if (running_in_vgtest) {
+       SUCC;
+   } else {
+      FAIL;
+   }
 
    /* SYS_quotactl                148 */
    GO(SYS_quotactl, "(Q_QUOTAOFF) 2s 0m");
@@ -591,19 +631,9 @@ int main(void)
    GO(SYS_getfh, "2s 2m");
    SY(SYS_getfh, x0, x0); FAIL;
 
-#if (FREEBSD_VERS <= FREEBSD_10)
-   /* SYS_getdomainname          162 */
-   GO(SYS_freebsd4_getdomainname, "2s 1m");
-   SY(SYS_freebsd4_getdomainname, x0, x0); FAIL;
-
-   /* SYS_setdomainname           163 */
-   GO(SYS_freebsd4_setdomainname, "2s 0m");
-   SY(SYS_freebsd4_setdomainname, x0, x0); FAIL;
-
-   /* SYS_uname                   164 */
-   GO(SYS_freebsd4_uname, "1s 1m");
-   SY(SYS_freebsd4_uname, x0); FAIL;
-#endif
+   /* SYS_freebsd4_getdomainname  162 */
+   /* SYS_freebsd4_setdomainname  163 */
+   /* SYS_freebsd_4uname          164 */
 
    /* SYS_sysarch                 165 */
 #if defined (VGP_x86_freebsd)
@@ -618,6 +648,27 @@ int main(void)
 
    GO(SYS_sysarch, "2s 0m");
    SY(SYS_sysarch, x0+AMD64_SET_FSBASE, x0); FAIL;
+#elif defined(VGP_arm64_freebsd)
+// does not exist
+   FAKE_GO("165:             SYS_sysarch 2s 1m");
+   FAKE_SY("Syscall param sysarch(number) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param sysarch(args) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param amd64_get_fsbase(basep) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+   FAKE_GO("165:             SYS_sysarch 2s 0m");
+   FAKE_SY("Syscall param sysarch(number) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param sysarch(args) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+
 #else
 #error "freebsd platform not defined"
 #endif
@@ -630,21 +681,12 @@ int main(void)
    SY(SYS_rtprio, x0+1, x0, x0); FAIL;
 
    /* following 3 not implemented in OS */
-
    /* SYS_semsys                  169 */
-
    /* SYS_msgsys                  170 */
-
    /* SYS_shmsys                  171 */
 
-#if (FREEBSD_VERS <= FREEBSD_10)
-
-   /* @todo PJF maybe one day */
-
    /* SYS_freebsd6_pread          173 */
-
    /* SYS_freebsd6_pwrite         174 */
-#endif
 
    /* SYS_setfib                  175 */
    GO(SYS_setfib, "1s 0m");
@@ -653,9 +695,7 @@ int main(void)
    // BSDXY(__NR_ntp_adjtime,   sys_ntp_adjtime),       // 176
 
    /* bsd/os sfork                177 */
-
    /* bsd/os getdescriptor        178 */
-
    /* bsd/os setdescriptor        179 */
 
    /* SYS_setgid,                 181 */
@@ -679,32 +719,35 @@ int main(void)
 
    /* unimpl lfs_segwait          187 */
 
- #if (FREEBSD_VERS >= FREEBSD_12)
+ #if defined(SYS_freebsd11_stat)
    /* SYS_freebsd11_stat          188 */
    GO(SYS_freebsd11_stat, "2s 2m");
    SY(SYS_freebsd11_stat, x0, x0); FAIL;
-
-   /* SYS_freebsd11_fstat         189 */
-   GO(SYS_freebsd11_fstat, "2s 1m");
-   SY(SYS_freebsd11_fstat, x0, x0); FAIL;
-
-   /* SYS_freebsd11_lstat         190 */
-   GO(SYS_freebsd11_lstat, "2s 2m");
-   SY(SYS_freebsd11_lstat, x0, x0); FAIL;
-
- #else
+#else
    /* SYS_stat          188 */
    GO(SYS_stat, "2s 2m");
    SY(SYS_stat, x0, x0); FAIL;
+#endif
 
+#if defined(SYS_freebsd11_fstat)
+   /* SYS_freebsd11_fstat         189 */
+   GO(SYS_freebsd11_fstat, "2s 1m");
+   SY(SYS_freebsd11_fstat, x0, x0); FAIL;
+#else
    /* SYS_fstat                   189 */
    GO(SYS_fstat, "2s 1m");
    SY(SYS_fstat, x0, x0); FAIL;
+#endif
 
+#if defined(SYS_freebsd11_lstat)
+   /* SYS_freebsd11_lstat         190 */
+   GO(SYS_freebsd11_lstat, "2s 2m");
+   SY(SYS_freebsd11_lstat, x0, x0); FAIL;
+#else
    /* SYS_lstat         190 */
    GO(SYS_lstat, "2s 2m");
    SY(SYS_lstat, x0, x0); FAIL;
- #endif
+#endif
 
    /* SYS_pathconf                191 */
    GO(SYS_pathconf, "2s 1m");
@@ -725,7 +768,7 @@ int main(void)
    SY(SYS_setrlimit, x0, x0); FAIL;
 
    /* SYS_freebsd11_getdirentries 196 */
- #if (FREEBSD_VERS >= FREEBSD_12)
+ #if defined(SYS_freebsd11_getdirentries)
    GO(SYS_freebsd11_getdirentries, "4s 2m");
    SY(SYS_freebsd11_getdirentries, x0, x0, x0+3, x0+1); FAIL;
 #else
@@ -733,19 +776,13 @@ int main(void)
    SY(SYS_getdirentries, x0, x0, x0+3, x0+1); FAIL;
 #endif
 
-#if (FREEBSD_VERS <= FREEBSD_10)
    /* SYS_freebsd6_mmap           197*/
-#endif
 
    /* __syscall (handled specially) 198 */
 
-#if (FREEBSD_VERS <= FREEBSD_10)
    /* SYS_freebsd6_lseek          199 */
-
    /* SYS_freebsd6_truncate       200 */
-
    /* SYS_freebsd6_ftruncate      201 */
-#endif
 
    /* SYS___sysctl                202 */
    GO(SYS___sysctl, "(getoldlen) 3s 2m");
@@ -790,12 +827,47 @@ int main(void)
       SY(SYS_poll, &fds, 1, 1); SUCC;
    }
 
+// On aarch64 this is defined in the header but
+// the kernel returns ENOSYS
+// The aarch64 port postdates FreeBSD 7
+#if !defined(VGP_arm64_freebsd)
+#if defined(SYS_freebsd7___semctl)
    /* SYS_freebsd7___semctl       220 */
-   GO(SYS_freebsd7___semctl, "(IPC_INFO) 4s 1m");
-   SY(SYS_freebsd7___semctl, x0, x0, x0+IPC_INFO, x0+1); FAIL;
+   GO(SYS_freebsd7___semctl, "(IPC_STAT) 4s 1m");
+   SY(SYS_freebsd7___semctl, x0, x0, x0+IPC_STAT, x0+1); FAIL;
 
    GO(SYS_freebsd7___semctl, "(bogus cmd) 3s 0m");
    SY(SYS_freebsd7___semctl, x0, x0, x0-1, x0+1); FAIL;
+#endif
+#else
+   FAKE_GO("220:   SYS_freebsd7___semctl (IPC_STAT) 4s 1m");
+   FAKE_SY("Syscall param freebsd7___semctl(semid) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param freebsd7___semctl(semnum) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param freebsd7___semctl(cmd) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param freebsd7___semctl(arg) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param freebsd7___semctl(arg) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+   FAKE_GO("220:   SYS_freebsd7___semctl (bogus cmd) 3s 0m");
+   FAKE_SY("Syscall param freebsd7___semctl(semid) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param freebsd7___semctl(semnum) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param freebsd7___semctl(cmd) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+#endif
 
    /* SYS_semget                  221 */
    GO(SYS_semget, "3s 0m");
@@ -807,12 +879,46 @@ int main(void)
 
    /* unimpl semconfig            223 */
 
+#if !defined(VGP_arm64_freebsd)
+#if defined(SYS_freebsd7_msgctl)
    /* SYS_freebsd7_msgctl         224 */
    GO(SYS_freebsd7_msgctl, "(set) 3s 1m");
    SY(SYS_freebsd7_msgctl, x0, x0+1, x0); FAIL;
 
    GO(SYS_freebsd7_msgctl, "(stat) 3s 1m");
    SY(SYS_freebsd7_msgctl, x0, x0+2, x0); FAIL;
+#endif
+#else
+   FAKE_GO("224:     SYS_freebsd7_msgctl (set) 3s 1m");
+   FAKE_SY("Syscall param freebsd7_msgctl(msqid) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param freebsd7_msgctl(cmd) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param freebsd7_msgctl(buf) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param freebsd7_msgctl(IPC_SET, buf) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+
+   FAKE_GO("224:     SYS_freebsd7_msgctl (stat) 3s 1m");
+   FAKE_SY("Syscall param freebsd7_msgctl(msqid) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param freebsd7_msgctl(cmd) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param freebsd7_msgctl(buf) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param freebsd7_msgctl(IPC_STAT, buf) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+#endif
 
    /* SYS_msgget                  225 */
    GO(SYS_msgget, "2s 0m");
@@ -830,13 +936,39 @@ int main(void)
    GO(SYS_shmat, "3s 0m");
    SY(SYS_shmat, x0, x0, x0); FAIL;
 
+#if !defined(VGP_arm64_freebsd)
+#if defined(SYS_freebsd7_shmctl)
    /* SYS_freebsd7_shmctl         229 */
    GO(SYS_freebsd7_shmctl, "3s 0m");
    SY(SYS_freebsd7_shmctl, x0, x0, x0); FAIL;
 
    GO(SYS_freebsd7_shmctl, "(bogus cmd) 3s 0m");
    SY(SYS_freebsd7_shmctl, x0, x0-1, x0+1); FAIL;
+#endif
+#else
+   FAKE_GO("229:     SYS_freebsd7_shmctl 3s 0m");
+   FAKE_SY("Syscall param freebsd7_shmctl(shmid) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param freebsd7_shmctl(cmd) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param freebsd7_shmctl(buf) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
 
+   FAKE_GO("229:     SYS_freebsd7_shmctl (bogus cmd) 3s 0m");
+   FAKE_SY("Syscall param freebsd7_shmctl(shmid) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param freebsd7_shmctl(cmd) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param freebsd7_shmctl(buf) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+
+#endif
 
    /* SYS_shmdt                   230 */
    GO(SYS_shmdt, "1s 0m");
@@ -888,11 +1020,11 @@ int main(void)
 
    // unimpl SYS_ffclock_getestimate                       243
 
-#if (FREEBSD_VERS >= FREEBSD_11)
+#if defined(SYS_clock_nanosleep)
    /* SYS_clock_nanosleep         244 */
-   /* this succeeds ? */
    GO(SYS_clock_nanosleep, "4s 2m");
-   SY(SYS_clock_nanosleep, x0+5000, x0+3000, x0, x0+1); SUCC;
+   SY(SYS_clock_nanosleep, x0+5000, x0+3000, x0+3, x0+1); SUCC;
+   assert(res == EFAULT);
 #endif
 
    // SYS_clock_getcpuclockid2                             247
@@ -933,7 +1065,7 @@ int main(void)
    SY(SYS_lio_listio, x0+0, x0+1, x0+10, x0+1); FAIL;
 
    /* SYS_freebsd11_getdents      272 */
-#if (FREEBSD_VERS >= FREEBSD_12)
+#if defined(SYS_freebsd11_getdents)
    GO(SYS_freebsd11_getdents, "3s 1m");
    SY(SYS_freebsd11_getdents, x0+9, x0+1, x0+2); FAIL;
 #else
@@ -960,7 +1092,7 @@ int main(void)
    /* netbsd lstat                280 */
 
    /* SYS_preadv                  289 */
-#if defined(VGP_amd64_freebsd)
+#if defined(VGP_amd64_freebsd) || defined(VGP_arm64_freebsd)
    GO(SYS_preadv, "4s 0m");
    /* 0m because of the bogus fd */
    SY(SYS_preadv, x0+9999999, x0+1, x0+16, x0+20); FAIL;
@@ -970,7 +1102,7 @@ int main(void)
 #endif
 
    /* SYS_pwritev                    290 */
-#if defined(VGP_amd64_freebsd)
+#if defined(VGP_amd64_freebsd) || defined(VGP_arm64_freebsd)
    GO(SYS_pwritev, "4s 0m");
    SY(SYS_pwritev, x0+9999999, x0+1, x0+16, x0+20); FAIL;
 #else
@@ -990,7 +1122,7 @@ int main(void)
 
    /* SYS_modnext                 300 */
    GO(SYS_modnext, "1s 0m");
-   SY(SYS_modnext, x0+1); SUCC;
+   SY(SYS_modnext, x0+100000); FAIL;
 
    /* SYS_modstat                 301 */
    GO(SYS_modstat, "2s 1m");
@@ -998,7 +1130,7 @@ int main(void)
 
    /* SYS_modfnext                302 */
    GO(SYS_modfnext, "1s 0m");
-   SY(SYS_modfnext, x0+1); SUCC;
+   SY(SYS_modfnext, x0+100000); FAIL;
 
    /* SYS_modfind                 303 */
    GO(SYS_modfind, "1s 1m");
@@ -1117,6 +1249,7 @@ int main(void)
    SY(SYS_sched_rr_get_interval, x0+999999, x0+1); FAIL;
 
    /* SYS_utrace                  335*/
+   /* only works if process is being traced */
    GO(SYS_utrace, "2s 1m");
    SY(SYS_utrace, x0+1, x0+16); SUCC;
 
@@ -1157,7 +1290,11 @@ int main(void)
 
    /* SYS_sigwaitinfo             346 */
    GO(SYS_sigwaitinfo, "2s 2m");
-   SY(SYS_sigwaitinfo, x0+1, x0+2, x0+3); FAIL;
+   SY(SYS_sigwaitinfo, x0+1, x0+2); FAIL;
+
+   GO(SYS_sigwaitinfo, "(NULL info) 2s 1m");
+   SY(SYS_sigwaitinfo, x0, x0); FAIL;
+
 
    /* SYS___acl_get_file          347 */
    GO(SYS___acl_get_file, "3s 2m");
@@ -1224,7 +1361,7 @@ int main(void)
    SY(SYS_kqueue); SUCC;
 
    /* SYS_freebsd11_kevent        363 */
-#if (FREEBSD_VERS >= FREEBSD_12)
+#if defined(SYS_freebsd11_kevent)
    GO(SYS_freebsd11_kevent, "6s 3m");
    SY(SYS_freebsd11_kevent, x0+1, x0+2, x0+3, x0+4, x0+5, x0+6); FAIL;
 #else
@@ -1291,9 +1428,6 @@ int main(void)
    GO(SYS_kenv, "(KENV_DUMP) 4s 0m");
    SY(SYS_kenv, x0+3, x0+2, x0+3, x0+4); FAIL;
 
-   GO(SYS_kenv, "(bogus) 4s 0m");
-   SY(SYS_kenv, x0+20, x0+2, x0+3, x0+4); FAIL;
-
    /* SYS_lchflags                391 */
    GO(SYS_lchflags, "2s 1m");
    SY(SYS_lchflags, x0+1, x0+2); FAIL;
@@ -1308,39 +1442,44 @@ int main(void)
 
    // mac_syscall                                          394
 
-#if (FREEBSD_VERS >= FREEBSD_12)
+#if defined(SYS_freebsd11_getfsstat)
    /* SYS_freebsd11_getfsstat     395*/
    GO(SYS_freebsd11_getfsstat, "3s 1m");
    SY(SYS_freebsd11_getfsstat, x0+1, x0+2, x0+3); FAIL;
-
-   /* SYS_freebsd11_statfs        396 */
-   GO(SYS_freebsd11_statfs, "2s 2m");
-   SY(SYS_freebsd11_statfs, x0+1, x0+2); FAIL;
-
-   /* SYS_freebsd11_fstatfs       397 */
-   GO(SYS_freebsd11_fstatfs, "2s 1m");
-   SY(SYS_freebsd11_fstatfs, x0+1, x0+2); FAIL;
-
-   /* SYS_freebsd11_fhstatfs      398 */
-   GO(SYS_freebsd11_fhstatfs, "2s 2m");
-   SY(SYS_freebsd11_fhstatfs, x0+1, x0+2); FAIL;
 #else
    /* SYS_getfsstat     395*/
    GO(SYS_getfsstat, "3s 1m");
    SY(SYS_getfsstat, x0+1, x0+2, x0+3); FAIL;
+#endif
 
+#if defined(SYS_freebsd11_statfs)
+   /* SYS_freebsd11_statfs        396 */
+   GO(SYS_freebsd11_statfs, "2s 2m");
+   SY(SYS_freebsd11_statfs, x0+1, x0+2); FAIL;
+#else
    /* SYS_statfs        396 */
    GO(SYS_statfs, "2s 2m");
    SY(SYS_statfs, x0+1, x0+2); FAIL;
+#endif
 
+#if defined(SYS_freebsd11_fstatfs)
+   /* SYS_freebsd11_fstatfs       397 */
+   GO(SYS_freebsd11_fstatfs, "2s 1m");
+   SY(SYS_freebsd11_fstatfs, x0+1, x0+2); FAIL;
+#else
    /* SYS_fstatfs       397 */
    GO(SYS_fstatfs, "2s 1m");
    SY(SYS_fstatfs, x0+1, x0+2); FAIL;
+#endif
 
+#if defined(SYS_freebsd11_fhstatfs)
+   /* SYS_freebsd11_fhstatfs      398 */
+   GO(SYS_freebsd11_fhstatfs, "2s 2m");
+   SY(SYS_freebsd11_fhstatfs, x0+1, x0+2); FAIL;
+#else
    /* SYS_fhstatfs      398 */
    GO(SYS_fhstatfs, "2s 2m");
    SY(SYS_fhstatfs, x0+1, x0+2); FAIL;
-
 #endif
 
    // ksem_close                                           400
@@ -1402,7 +1541,7 @@ int main(void)
    GO(SYS_swapcontext, "2s 2m");
    SY(SYS_swapcontext, x0+1, x0+2); FAIL;
 
-#if (FREEBSD_VERS >= FREEBSD_13_1)
+#if defined(SYS_freebsd13_swapoff)
    /* SYS_freebsd13_swapoff                 424 */
    GO(SYS_freebsd13_swapoff, "1s 1m");
    SY(SYS_freebsd13_swapoff, x0+1); FAIL;
@@ -1431,6 +1570,11 @@ int main(void)
    /* SYS_sigwait                 429 */
    GO(SYS_sigwait, "2s 2m");
    SY(SYS_sigwait, x0+1, x0+2); SUCC;
+   assert(res == EFAULT);
+
+   GO(SYS_sigwait, "(NULL ags) 2s 2m");
+   SY(SYS_sigwait, x0, x0); SUCC;
+   assert(res == EFAULT);
 
    // thr_create                  430
 
@@ -1445,13 +1589,8 @@ int main(void)
    GO(SYS_thr_kill, "2s 0m");
    SY(SYS_thr_kill, x0-10, x0-20); FAIL;
 
-#if (FREEBSD_VERS <= FREEBSD_10)
-
-   /* @todo PJF (maybe) FreeBSD 10 or earlier, hmmm */
-   // BSDXY(__NR__umtx_lock,       sys__umtx_lock),        // 434
-
-   // BSDXY(__NR__umtx_unlock,     sys__umtx_unlock),      // 435
-#endif
+   /* SYS_freebsd10__umtx_lock    434 */
+   /* SYS_freebsd10__umtx_unlock  435 */
 
    /* SYS_jail_attach             436 */
    GO(SYS_jail_attach, "1s 0m");
@@ -1612,7 +1751,7 @@ int main(void)
    SY(SYS_mmap, x0+1, x0, x0+123456, x0+234567, x0+99, x0+3); FAIL;
 
    /* SYS_lseek                   478 */
-#if defined(VGP_amd64_freebsd)
+#if defined(VGP_amd64_freebsd) || defined(VGP_arm64_freebsd)
    GO(SYS_lseek, "3s 0m");
    SY(SYS_lseek, x0+99, x0+1, x0+55); FAIL;
 #else
@@ -1621,7 +1760,7 @@ int main(void)
 #endif
 
    /* SYS_truncate                479 */
-#if defined(VGP_amd64_freebsd)
+#if defined(VGP_amd64_freebsd) || defined(VGP_arm64_freebsd)
    GO(SYS_truncate, "2s 1m");
    SY(SYS_truncate, x0+1, x0+1); FAIL;
 #else
@@ -1630,7 +1769,7 @@ int main(void)
 #endif
 
    /* SYS_ftruncate               480 */
-#if defined(VGP_amd64_freebsd)
+#if defined(VGP_amd64_freebsd) || defined(VGP_arm64_freebsd)
    GO(SYS_ftruncate, "2s 0m");
    SY(SYS_ftruncate, x0+99, x0+1); FAIL;
 #else
@@ -1643,17 +1782,19 @@ int main(void)
    SY(SYS_thr_kill2, x0-1, x0-1, x0+9999); FAIL;
 
    /* SYS_shm_open                482 */
-#if (FREEBSD_VERS >= FREEBSD_13_0)
+#if defined(SYS_freebsd12_shm_open)
    GO(SYS_freebsd12_shm_open, "(SHM_ANON) 3s 0m");
    SY(SYS_freebsd12_shm_open, x0+SHM_ANON, x0+2, x0+9); SUCC;
+
+   GO(SYS_freebsd12_shm_open, "3s 1m");
+   SY(SYS_freebsd12_shm_open, x0+2, x0+2, x0+9); FAIL;
 #else
    GO(SYS_shm_open, "(SHM_ANON) 3s 0m");
    SY(SYS_shm_open, x0+SHM_ANON, x0+2, x0+9); SUCC;
-#endif
 
-   // @todo this was causing a VG crash
-   // GO(SYS_shm_open, "3s 1m");
-   //SY(SYS_shm_open, x0+2, x0+2, x0+9); SUCC;
+   GO(SYS_shm_open, "3s 1m");
+   SY(SYS_shm_open, x0+2, x0+2, x0+9); FAIL;
+#endif
 
    /* SYS_shm_unlink              483 */
    GO(SYS_shm_unlink, "1s 1m");
@@ -1664,7 +1805,7 @@ int main(void)
    SY(SYS_cpuset, x0+1); FAIL;
 
    /* cpuset_setid                485 */
-#if defined (VGP_amd64_freebsd)
+#if defined (VGP_amd64_freebsd) || defined(VGP_arm64_freebsd)
    GO(SYS_cpuset_setid, "3s 0m");
    SY(SYS_cpuset_setid, x0, x0, x0); FAIL;
 #else
@@ -1685,8 +1826,8 @@ int main(void)
    SY(SYS_cpuset_setaffinity, x0+100, x0+100, x0+200, x0+500, x0+1); FAIL;
 
    /* SYS_faccessat               489 */
-   GO(SYS_faccessat, "3s 1m");
-   SY(SYS_faccessat, x0+1, x0, x0); FAIL;
+   GO(SYS_faccessat, "4s 1m");
+   SY(SYS_faccessat, x0+1, x0, x0, x0); FAIL;
 
    /* SYS_fchmodat                490 */
    GO(SYS_fchmodat, "4s 1m");
@@ -1701,7 +1842,7 @@ int main(void)
    SY(SYS_fexecve, x0-1, x0+1, x0+1); FAIL;
 
    /* SYS_freebsd11_fstatat       493 */
-#if (FREEBSD_VERS >= FREEBSD_12)
+#if defined(SYS_freebsd11_fstatat)
    GO(SYS_freebsd11_fstatat, "4s 2m");
    SY(SYS_freebsd11_fstatat, x0, x0+1, x0+1, x0); FAIL;
 #else
@@ -1726,7 +1867,7 @@ int main(void)
    SY(SYS_mkfifoat, x0, x0, x0); FAIL;
 
    /* SYS_freebsd11_mknodat       498 */
-#if (FREEBSD_VERS >= FREEBSD_12)
+#if defined(SYS_freebsd11_mknodat)
    GO(SYS_freebsd11_mknodat, "4s 1m");
    SY(SYS_freebsd11_mknodat, x0, x0+1, x0, x0); FAIL;
 #else
@@ -1776,7 +1917,7 @@ int main(void)
    SY(SYS_jail_remove, x0+1); FAIL;
 
    /* SYS_closefrom               509 */
-#if (FREEBSD_VERS >= FREEBSD_13_0)
+#if defined(SYS_freebsd12_closefrom)
    GO(SYS_freebsd12_closefrom, "1s 0m");
    SY(SYS_freebsd12_closefrom, x0+100000); SUCC;
 #else
@@ -1785,8 +1926,8 @@ int main(void)
 #endif
 
    /* SYS___semctl                510 */
-   GO(SYS___semctl, "(IPC_INFO) 4s 1m");
-   SY(SYS___semctl, x0, x0, x0+IPC_INFO, x0+1); FAIL;
+   GO(SYS___semctl, "(IPC_STAT) 4s 1m");
+   SY(SYS___semctl, x0, x0, x0+IPC_STAT, x0+1); FAIL;
 
    GO(SYS___semctl, "(other) 3s 0m");
    SY(SYS___semctl, x0, x0, x0+3000, x0+1); FAIL;
@@ -1862,17 +2003,19 @@ int main(void)
     SY(SYS_rctl_remove_rule, x0+1, x0+1, x0+2, x0+16); FAIL;
 
     /* SYS_posix_fallocate        530 */
-#if defined(VGP_amd64_freebsd)
+#if defined(VGP_amd64_freebsd) || defined(VGP_arm64_freebsd)
     GO(SYS_posix_fallocate, "3s 0m");
     SY(SYS_posix_fallocate, x0+99999, x0+10, x0+20); SUCC;
 #else
     GO(SYS_posix_fallocate, "5s 0m");
-    SY(SYS_posix_fallocate, x0+99999, x0, x0+10, x0, x0+20); SUCC;
+    SY(SYS_posix_fallocate, x0+9999, x0, x0+10, x0, x0+20); SUCC;
 #endif
+    assert(res == EBADF);
 
     /* SYS_posix_fadvise          531 */
     GO(SYS_posix_fadvise, "4s 0m");
-    SY(SYS_posix_fadvise, x0+99999, x0+10, x0+20, x0); SUCC;
+    SY(SYS_posix_fadvise, x0+9999, x0+10, x0+20, x0); SUCC;
+    assert(res == EBADF);
 
     /* SYS_wait6                  532 */
     GO(SYS_wait6, "6s 3m");
@@ -1929,9 +2072,9 @@ int main(void)
     SY(SYS_aio_mlock, x0+1); FAIL;
 
     /* SYS_procctl                544 */
-#if defined(VGP_amd64_freebsd)
+#if defined(VGP_amd64_freebsd) || defined(VGP_arm64_freebsd)
     GO(SYS_procctl, "(PROC_REAP_RELEASE) 3s 0m");
-    SY(SYS_procctl, x0+9999, x0+9999, x0+PROC_REAP_RELEASE); FAIL;
+    SY(SYS_procctl, x0+9999, x0+9999, x0+PROC_REAP_RELEASE, NULL); FAIL;
 
     GO(SYS_procctl, "(PROC_REAP_GETPIDS) 4s 1m");
     SY(SYS_procctl, x0+9999, x0+9999, x0+PROC_REAP_GETPIDS, x0+1); FAIL;
@@ -1944,8 +2087,6 @@ int main(void)
 #endif
 
     // 544 is the highest syscall on FreeBSD 9
-
-#if (FREEBSD_VERS >= FREEBSD_10)
 
    /* SYS_ppoll                   545 */
    GO(SYS_ppoll, "4s 2m");
@@ -1966,10 +2107,6 @@ int main(void)
    GO(SYS_utimensat, "4s 2m");
    SY(SYS_utimensat, x0+99999999, x0+1, x0+1, x0); FAIL;
 
-#endif // FREEBSD_VERS >= FREEBSD_11
-
-#if (FREEBSD_VERS >= FREEBSD_11)
-
     // 548 is obsolete numa_getaffinity
 
     // 549 is obsolete numa_setaffinity
@@ -1978,10 +2115,7 @@ int main(void)
    GO(SYS_fdatasync, "1s 0m");
    SY(SYS_fdatasync, x0+99999999); FAIL;
 
-#endif // FREEBSD_VERS >= FREEBSD_11
-
-#if (FREEBSD_VERS >= FREEBSD_12)
-
+   // __FreeBSD_version 1200031
    /* SYS_fstat                   551 */
    GO(SYS_fstat, "2s 1m");
    SY(SYS_fstat, x0+99999999, x0+1); FAIL;
@@ -2018,6 +2152,7 @@ int main(void)
    GO(SYS_mknodat, "4s 1m");
    SY(SYS_mknodat, x0+999999, x0+1, x0, x0); FAIL;
 
+   // FreeBSD_version 1200033
    /* SYS_kevent                 560 */
    GO(SYS_kevent, "6s 3m");
    SY(SYS_kevent, x0+1, x0+2, x0+3, x0+4, x0+5, x0+6); FAIL;
@@ -2034,6 +2169,7 @@ int main(void)
    GO(SYS_getrandom, "3s 1m");
    SY(SYS_getrandom, x0+1, x0+1, x0); FAIL;
 
+   // __FreeBSD_version 1200031)
    /* SYS_getfhat                 564 */
    GO(SYS_getfhat, "4s 2m");
    SY(SYS_getfhat, x0, x0, x0, x0); FAIL;
@@ -2050,11 +2186,9 @@ int main(void)
    GO(SYS_fhreadlink, "3s 2m");
    SY(SYS_fhreadlink, x0+1, x0+1, x0+10);
 
-#endif
-
-#if (FREEBSD_VERS >= FREEBSD_12_2)
-
-      /* SYS___sysctlbyname       570 */
+   // __FreeBSD_version 1201522
+   // __FreeBSD_version 1300045
+   /* SYS___sysctlbyname          570 */
    GO(SYS___sysctlbyname, "(getoldlen) 3s 2m");
    SY(SYS___sysctlbyname, x0, x0+1, NULL, x0+1, NULL, x0); FAIL;
 
@@ -2064,7 +2198,415 @@ int main(void)
    GO(SYS___sysctlbyname, "(putnew) 4s 2m");
    SY(SYS___sysctlbyname, x0, x0+1, NULL, NULL, x0+1, x0+2); FAIL;
 
+   // FreeBSD 13 (and any backports)
+   /* SYS_shm_open2               571 */
+#if defined(SYS_shm_open2)
+   GO(SYS_shm_open2, " 5s 2m");
+   SY(SYS_shm_open2, x0+0xf00c, x0+1, x0+2, x0+3, x0+4); FAIL;
+
+   GO(SYS_shm_open2, " 5s 1m");
+   SY(SYS_shm_open2, x0+SHM_ANON, x0+1, x0+2, x0+3, x0+4); FAIL;
+#else
+   FAKE_GO("571:           SYS_shm_open2  5s 2m");
+   FAKE_SY("Syscall param shm_open2(path) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param shm_open2(flags) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param shm_open2(mode) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param shm_open2(shmflags) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param shm_open2(name) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param shm_open2(path) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param shm_open2(name) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+
+   FAKE_GO("571:           SYS_shm_open2  5s 1m");
+   FAKE_SY("Syscall param shm_open2(path) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param shm_open2(flags) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param shm_open2(mode) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param shm_open2(shmflags) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param shm_open2(name) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param shm_open2(name) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
 #endif
+
+   /* SYS___realpathat            574 */
+#if defined(SYS___realpathat)
+   GO(SYS___realpathat, " 5s 2m");
+   SY(SYS___realpathat, x0+0xffff, x0, x0, x0+100, x0+2); FAIL;
+#else
+   FAKE_GO("574:        SYS___realpathat  5s 2m");
+   FAKE_SY("Syscall param __realpathat(fd) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param __realpathat(path) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param __realpathat(buf) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param __realpathat(size) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param __realpathat(flags) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param __realpathat(path) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param __realpathat(buf) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+#endif
+
+   /* SYS_close_range             575 */
+#if defined(SYS_close_range)
+   GO(SYS_close_range, "3s 0m");
+   SY(SYS_close_range, x0+5, x0+10, x0+12345); FAIL;
+#else
+#endif
+
+   /* SYS___specialfd             577 */
+#if defined(SYS___specialfd)
+   GO(SYS___specialfd, "3s 1m");
+   SY(SYS___specialfd, x0+0xf000, x0+1, x0+10); FAIL;
+#else
+   FAKE_GO("577:         SYS___specialfd 3s 1m");
+   FAKE_SY("Syscall param __specialfd(type) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param __specialfd(req) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param __specialfd(len) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param __specialfd(req) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+#endif
+
+   /* SYS_aio_writev              578 */
+#if defined(SYS_aio_writev)
+   GO(SYS_aio_writev, "1s 1m");
+   SY(SYS_aio_writev, x0+1); FAIL;
+#else
+   FAKE_GO("578:          SYS_aio_writev 1s 1m");
+   FAKE_SY("Syscall param aio_writev(iocb) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param aio_writev(iocb) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+#endif
+
+   /* SYS_aio_readv               579 */
+#if defined(SYS_aio_readv)
+   GO(SYS_aio_readv, "1s 1m");
+   SY(SYS_aio_readv, x0+1); FAIL;
+#else
+   FAKE_GO("579:           SYS_aio_readv 1s 1m");
+   FAKE_SY("Syscall param aio_readv(iocb) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param aio_readv(iocb) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+#endif
+
+    // FreeBSD 15 (and any backports)
+   /* SYS_kqueuex                 583 */
+#if defined(SYS_kqueuex)
+   GO(SYS_kqueuex, " 1s 0m");
+   SY(SYS_kqueuex, x0+123); FAIL;
+#else
+   FAKE_GO("583:             SYS_kqueuex  1s 0m");
+   FAKE_SY("Syscall param kqueuex(flags) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+#endif
+
+   /* SYS_membarrier              584 */
+#if defined(SYS_membarrier)
+   GO(SYS_membarrier, " 3s 0m");
+   SY(SYS_membarrier, x0+123, x0+456, x0+789); FAIL;
+#else
+   FAKE_GO("584:          SYS_membarrier  3s 0m");
+   FAKE_SY("Syscall param membarrier(cmd) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param membarrier(flags) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param membarrier(cpu_id) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+#endif
+
+   /* SYS_timerfd_create          585 */
+#if defined(SYS_timerfd_create)
+   GO(SYS_timerfd_create, " 2s 0m");
+   SY(SYS_timerfd_create, x0+123, x0+23456); FAIL;
+#else
+   FAKE_GO("585:      SYS_timerfd_create  2s 0m");
+   FAKE_SY("Syscall param timerfd_create(clockid) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param timerfd_create(flags) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+#endif
+
+   /* SYS_timerfd_gettime         586 */
+#if defined(SYS_timerfd_gettime)
+   GO(SYS_timerfd_gettime, " 2s 1m");
+   SY(SYS_timerfd_gettime, x0+100, x0); FAIL;
+#else
+   FAKE_GO("586:     SYS_timerfd_gettime  2s 1m");
+   FAKE_SY("Syscall param timerfd_gettime(fd) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param timerfd_gettime(curr_value) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param timerfd_gettime(curr_value) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+#endif
+
+   /* SYS_timerfd_settime         587 */
+#if defined(SYS_timerfd_settime)
+   GO(SYS_timerfd_settime, "4s 2m");
+   SY(SYS_timerfd_settime, x0+321, x0, x0+10, x0+5); FAIL;
+#else
+   FAKE_GO("587:     SYS_timerfd_settime 4s 2m");
+   FAKE_SY("Syscall param timerfd_settime(fd) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param timerfd_settime(flags) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param timerfd_settime(new_value) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param timerfd_settime(old_value) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param timerfd_settime(new_value) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param timerfd_settime(old_value) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+#endif
+
+   /* SYS_kcmp                    588 */
+#if defined(SYS_kcmp)
+   GO(SYS_kcmp, "5s 0m");
+   SY(SYS_kcmp, x0+1, x0+2, x0+3, x0+4, x0+5);
+#else
+   FAKE_GO("588:                SYS_kcmp 5s 0m");
+   FAKE_SY("Syscall param kcmp(pid1) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param kcmp(pid2) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param kcmp(type) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param kcmp(idx1) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param kcmp(idx2) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+#endif
+
+   /* SYS_getrlimitusage          589 */
+#if defined(SYS_getrlimitusage)
+   GO(SYS_getrlimitusage, "3s, 1m");
+   SY(SYS_getrlimitusage, x0+3, x0, x0+2);
+#else
+   FAKE_GO("589:      SYS_getrlimitusage 3s, 1m");
+   FAKE_SY("Syscall param getrlimitusage(which) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param getrlimitusage(flags) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param getrlimitusage(res) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param getrlimitusage(res) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+#endif
+
+   /* SYS_fchroot                 590 */
+#if defined(SYS_fchroot)
+   GO(SYS_fchroot, "1s, 0m");
+   SY(SYS_fchroot, x0+1000);
+#else
+   FAKE_GO("590:             SYS_fchroot 1s, 0m");
+   FAKE_SY("Syscall param fchroot(fd) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+#endif
+
+   /* SYS_setcred                 591 */
+#if defined(SYS_setcred)
+   GO(SYS_setcred, "3s, 1m");
+   SY(SYS_setcred, x0+100, x0+3, x0+50);
+#else
+   FAKE_GO("591:             SYS_setcred 3s, 1m");
+   FAKE_SY("Syscall param setcred(flags) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param setcred(wcred) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param setcred(size) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param setcred(wcred) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+#endif
+
+   /* SYS_wxterrctl               592 */
+#if defined(SYS_exterrctl)
+   GO(SYS_exterrctl, "3s, 1m");
+   SY(SYS_exterrctl, x0, x0+1, x0+1);
+#else
+   FAKE_GO("592:           SYS_exterrctl 3s, 1m");
+   FAKE_SY("Syscall param exterrctl(op) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param exterrctl(flags) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param exterrctl(ptr) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param exterrctl(ptr) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+#endif
+
+   /* SYS_inotify_add_watch_at    593 */
+#if defined(SYS_inotify_add_watch_at)
+   GO(SYS_inotify_add_watch_at, "4s, 1m");
+   SY(SYS_inotify_add_watch_at, x0+99, x0+100, x0+1, x0+999999);
+#else
+   FAKE_GO("593:SYS_inotify_add_watch_at 4s, 1m");
+   FAKE_SY("Syscall param inotify_add_watch_at(fd) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param inotify_add_watch_at(dfd) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param inotify_add_watch_at(path) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param inotify_add_watch_at(mask) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param inotify_add_watch_at(path) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+#endif
+
+   /* SYS_inotify_rm_watch        594 */
+#if defined(SYS_inotify_rm_watch)
+   GO(SYS_inotify_rm_watch, "2s, 0m");
+   SY(SYS_inotify_rm_watch, x0+1000, x0+1000);
+#else
+   FAKE_GO("594:    SYS_inotify_rm_watch 2s, 0m");
+   FAKE_SY("Syscall param inotify_rm_watch(fd) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param inotify_rm_watch(wd) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+#endif
+
+   /* SYS_getgroups               595 */
+#if defined(SYS_freebsd14_getgroups)
+   GO(SYS_getgroups, "2s 1m");
+   SY(SYS_getgroups, x0+1, x0+1); FAIL;
+#else
+   FAKE_GO("595:           SYS_getgroups 2s 1m");
+   FAKE_SY("Syscall param getgroups(size) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param getgroups(list) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param getgroups(list) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+#endif
+
+   /* SYS_setgroups               596 */
+#if defined(SYS_freebsd14_getgroups)
+   GO(SYS_setgroups, "2s 1m");
+   SY(SYS_setgroups, x0+1, x0+1); FAIL;
+#else
+   FAKE_GO("596:           SYS_setgroups 2s 1m");
+   FAKE_SY("Syscall param setgroups(size) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param setgroups(list) contains uninitialised byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY("\n");
+   FAKE_SY("Syscall param setgroups(list) points to unaddressable byte(s)\n");
+   FAKE_SY("   ...\n");
+   FAKE_SY(" Address 0x........ is not stack'd, malloc'd or (recently) free'd\n");
+   FAKE_SY("\n");
+#endif
+
+   // no such syscall...
+   GO(9999, "1e");
+   SY(9999); FAIL;
+
 
    /* SYS_exit                    1 */
    GO(SYS_exit, "1s 0m");

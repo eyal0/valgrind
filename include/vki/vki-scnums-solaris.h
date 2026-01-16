@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -32,6 +32,8 @@
 
 #ifndef __VKI_SCNUMS_SOLARIS_H
 #define __VKI_SCNUMS_SOLARIS_H
+
+#include "config.h"
 
 /* Note: Basic information about Solaris syscalls can be found in the kernel
    source file uts/common/os/sysent.c.
@@ -178,6 +180,9 @@
 #if defined(SOLARIS_UUIDSYS_SYSCALL)
 #define __NR_uuidsys                    SYS_uuidsys
 #endif /* SOLARIS_UUIDSYS_SYSCALL */
+#if defined(HAVE_MREMAP)
+#define __NR_mremap                     SYS_mremap
+#endif /* HAVE_MREMAP */
 #define __NR_mmapobj                    SYS_mmapobj
 #define __NR_setrlimit                  SYS_setrlimit
 #define __NR_getrlimit                  SYS_getrlimit

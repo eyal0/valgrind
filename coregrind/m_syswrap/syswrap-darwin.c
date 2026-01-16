@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -44,6 +44,7 @@
 #include "pub_core_libcprint.h"
 #include "pub_core_libcproc.h"
 #include "pub_core_libcsignal.h"
+#include "pub_core_mach.h"         // VG_(dyld_cache_*)
 #include "pub_core_machine.h"      // VG_(get_SP)
 #include "pub_core_mallocfree.h"
 #include "pub_core_options.h"
@@ -66,6 +67,7 @@
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <semaphore.h>
+#include <sys/kdebug.h>
 /* --- !!! --- EXTERNAL HEADERS end --- !!! --- */
 
 #define msgh_request_port      msgh_remote_port
@@ -74,6 +76,12 @@
 typedef HChar name_t[BOOTSTRAP_MAX_NAME_LEN];
 
 typedef uint64_t mig_addr_t;
+
+// Apple started using more inclusive language in Xcode 12+ and macOS 12+
+#if !defined(HOST_IO_MAIN_PORT)
+#define HOST_IO_MAIN_PORT HOST_IO_MASTER_PORT
+#endif
+
 
 
 // Saved ports
@@ -247,8 +255,6 @@ static void run_a_thread_NORETURN ( Word tidW )
 
    } else {
 
-      mach_msg_header_t msg;
-
       VG_(debugLog)(1, "syswrap-darwin", 
                        "run_a_thread_NORETURN(tid=%u): "
                           "not last one standing\n",
@@ -262,6 +268,8 @@ static void run_a_thread_NORETURN ( Word tidW )
 
       /* tid is now invalid. */
 
+#  if DARWIN_VERS < DARWIN_10_14
+      mach_msg_header_t msg;
       // GrP fixme exit race
       msg.msgh_bits = MACH_MSGH_BITS(17, MACH_MSG_TYPE_MAKE_SEND_ONCE);
       msg.msgh_request_port = VG_(gettid)();
@@ -271,9 +279,53 @@ static void run_a_thread_NORETURN ( Word tidW )
       tst->status = VgTs_Empty;
       // GrP fixme race here! new thread may claim this V thread stack 
       // before we get out here!
-      // GrP fixme use bsdthread_terminate for safe cleanup?
       mach_msg(&msg, MACH_SEND_MSG|MACH_MSG_OPTION_NONE, 
                sizeof(msg), 0, 0, MACH_MSG_TIMEOUT_NONE, 0);
+
+#else
+      /* We have to use this sequence to terminate the thread to
+         prevent a subtle race.  If VG_(exit_thread)() had left the
+         ThreadState as Empty, then it could have been reallocated,
+         reusing the stack while we're doing these last cleanups.
+         Instead, VG_(exit_thread) leaves it as Zombie to prevent
+         reallocation.  We need to make sure we don't touch the stack
+         between marking it Empty and exiting.  Hence the
+         assembler. */
+#if defined(VGP_x86_darwin)
+      asm volatile (
+         "movl %1, %0\n"	/* set tst->status = VgTs_Empty */
+         "movl %2, %%eax\n" /* set %eax = __NR_bsdthread_terminate */
+         "movl $0, %%ebx\n"
+         "pushl %%ebx\n" /* args on stack */
+         "pushl %%ebx\n"
+         "pushl %%ebx\n"
+         "pushl %%ebx\n"
+         "int	$0x81\n" /* bsdthread_terminate(0, 0, 0, 0) */
+         "popl %%ebx\n" /* pop args */
+         "popl %%ebx\n"
+         "popl %%ebx\n"
+         "popl %%ebx\n"
+         : "=m" (tst->status)
+         : "n" (VgTs_Empty), "n" (__NR_bsdthread_terminate)
+         : "eax", "ebx"
+      );
+#elif defined(VGP_amd64_darwin)
+      asm volatile (
+         "movl %1, %0\n"	/* set tst->status = VgTs_Empty */
+         "movq %2, %%rax\n"    /* set %rax = __NR_bsdthread_terminate */
+         "movq $0, %%rdi\n"
+         "movq $0, %%rsi\n"
+         "movq $0, %%rdx\n"
+         "movq $0, %%r10\n"
+         "syscall\n"		/* bsdthread_terminate(0, 0, 0, 0) */
+         : "=m" (tst->status)
+         : "n" (VgTs_Empty), "n" (__NR_bsdthread_terminate)
+         : "rax", "rdi", "rsi", "rdx", "r10"
+      );
+#else
+# error Unknown platform
+#endif
+#endif
       
       // DDD: This is reached sometimes on none/tests/manythreads, maybe
       // because of the race above.
@@ -671,6 +723,189 @@ void VG_(show_open_ports)(void)
 
 
 /* ---------------------------------------------------------------------
+   kdebug helpers
+   ------------------------------------------------------------------ */
+
+// Adapted from https://newosxbook.com/tools/kdv.html
+static const HChar *kdebug_std_codes[] =
+{
+  NULL,
+  "MACH",    // #define DBG_MACH                1
+  "NETWORK", // #define DBG_NETWORK             2
+  "FSYSTEM", // #define DBG_FSYSTEM             3
+  "BSD",     // #define DBG_BSD                 4
+  "IOKIT",   // #define DBG_IOKIT               5
+  "DRIVERS", // #define DBG_DRIVERS             6
+  "TRACE",   // #define DBG_TRACE               7
+  "DLIL",    // #define DBG_DLIL                8
+  "PTHREAD", // #define DBG_PTHREAD             9
+  "CORESTORAGE", // #define DBG_CORESTORAGE         10
+  "COREGRAPHICS", // #define DBG_CG                  11
+  "MONOTONICS", // #define DBG_MONOTONIC           12
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+  "MISC",    // #define DBG_MISC                20
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+  "SECURITY", // As of 10.10
+  "DYLD",    // #define DBG_DYLD                31
+  "QT",      // #define DBG_QT                  32
+  "APPS",    // #define DBG_APPS                33
+  "LAUNCHD", // #define DBG_LAUNCHD             34
+  "SILICON", // #define DBG_SILICON             35
+  "HANGTRACER",      // iOS 9: undocumented
+  "PERF" ,    // #define DBG_PERF                37
+  // added in 10.9
+  "IMPORTANCE",  // #define DBG_IMPORTANCE          38
+  NULL,  // Apparently present in iOS?
+  // Added in 10.10
+  "BANK",    // #define DBG_BANK                40
+  "XPC",     //#define DBG_XPC                 41
+  "ATM" ,    // #define DBG_ATM                 42
+  "ARIADNE", // #define DBG_ARIADNE             43
+  // Added in 10.11
+  "DAEMON",  // #define DBG_DAEMON              44
+  "ENERGYTRACE",  // #define DBG_ENERGYTRACE         45
+  "DISPATCH", // #define DBG_DISPATCH            46
+  NULL, NULL,
+  "IMG", // #define DBG_IMG                 49
+  NULL,
+  "UMALLOC", // #define DBG_UMALLOC             51
+  NULL,
+  "TURNSTILE", // #define DBG_TURNSTILE           53
+  "AUDIO", // #define DBG_AUDIO               54
+  NULL, NULL, NULL, NULL, NULL, // 55-59
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, // 60-69
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, // 70-79
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, // 80-89
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, // 90-99
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, // 100-109
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, // 110-119
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, // 120-129
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, // 130-139
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, // 140-149
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, // 150-159
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, // 160-169
+  "WINDOWSERVER", // apparently deprecated in 10.11 and merged with 49
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, // 171-179
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, // 180-189
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, // 190-199
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, // 200-209
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, // 210-219
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, // 220-229
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, // 230-238
+  "IOS_APPS", // iOS: Used by tons of Apps, undocumented
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, // 240-249
+  NULL, NULL, NULL, NULL, NULL, // 250-254
+  "MIG", // #define DBG_MIG                 255
+};
+
+struct KDebugTraceCode {
+  ULong code;
+  const HChar name[64];
+};
+
+static const HChar *kdebug_debugid(ULong did)
+{
+  static Bool kdebug_trace_codes_initd = False;
+  static UInt kdebug_trace_codes_count = 0;
+  static struct KDebugTraceCode* kdebug_trace_codes = NULL;
+
+  static HChar buf[64];
+
+  Int class = KDBG_EXTRACT_CLASS(did);
+  ULong event_id = did & KDBG_EVENTID_MASK;
+  HChar dir = '\0';
+  const HChar* found_class = NULL;
+
+  if (!kdebug_trace_codes_initd) {
+    HChar rbuf[1024];
+    Int leftover = 0;
+
+    kdebug_trace_codes_initd = True;
+    SysRes fd = VG_(open)("/usr/share/misc/trace.codes", O_RDONLY, 0);
+    if (sr_isError(fd)) {
+      VG_(close)(sr_Res(fd));
+    } else {
+      kdebug_trace_codes_count = 0;
+      while (1) {
+        Int count = VG_(read)(sr_Res(fd), rbuf, sizeof(rbuf));
+        if (count <= 0) {
+          break;
+        }
+        for (HChar* p = rbuf; p < rbuf + count; p += 1) {
+          if (*p == '\n') {
+            kdebug_trace_codes_count += 1;
+          }
+        }
+      }
+      kdebug_trace_codes = VG_(malloc)("kdebug_trace_codes",
+                                       kdebug_trace_codes_count *
+                                       sizeof(struct KDebugTraceCode));
+      VG_(lseek)(sr_Res(fd), 0, VKI_SEEK_SET);
+      kdebug_trace_codes_count = 0;
+      while (1) {
+        Int count = VG_(read)(sr_Res(fd), rbuf+leftover, sizeof(rbuf)-leftover);
+        if (count <= 0) {
+          break;
+        }
+        count += leftover;
+        Int start = 0;
+        for (HChar* p = rbuf; p < rbuf + count; p += 1) {
+          if (*p != '\n') {
+            continue;
+          }
+
+          HChar* end = NULL;
+          *p = '\0';
+          kdebug_trace_codes[kdebug_trace_codes_count].code = VG_(strtoll16)(rbuf+start, &end);
+          while (*end == ' ' || *end == '\t') {
+            end += 1;
+          }
+          // FIXME: gross cast!
+          VG_(strlcpy)((HChar*)(Addr)kdebug_trace_codes[kdebug_trace_codes_count].name, end, sizeof(kdebug_trace_codes[kdebug_trace_codes_count].name));
+          kdebug_trace_codes_count += 1;
+          start = p - rbuf + 1;
+        }
+        if (start < count) {
+          leftover = count - start;
+          VG_(memmove)(rbuf, rbuf+start, leftover);
+        }
+      }
+      VG_(close)(sr_Res(fd));
+    }
+  }
+
+  for (Int i = 0; i < kdebug_trace_codes_count; i += 1) {
+    const struct KDebugTraceCode* entry = &kdebug_trace_codes[i];
+    if (entry->code == event_id) {
+      found_class = entry->name;
+      break;
+    }
+  }
+  if (found_class == NULL) {
+    found_class = kdebug_std_codes[class];
+  }
+  if (found_class == NULL) {
+    found_class = "UNKNOWN";
+  }
+
+  if (did & DBG_FUNC_START) {
+    dir = '>';
+  }
+  if (did & DBG_FUNC_END) {
+    dir = '<';
+  }
+
+  if (dir) {
+    VG_(sprintf)(buf, "%c%s", dir, found_class);
+  } else {
+    VG_(sprintf)(buf, "%s", found_class);
+  }
+
+  return buf;
+}
+
+
+/* ---------------------------------------------------------------------
    sync_mappings
    ------------------------------------------------------------------ */
 
@@ -744,9 +979,19 @@ void update_syncstats ( CheckHowOften cho,
    // reorder
    static UInt reorder_ctr = 0;
    if (i > 0 && 0 == (1 & reorder_ctr++)) {
+#if defined(VGA_amd64)
+      // Some kind of compiler xmm-based optimization which causes a EXC_I386_GPFLT
+      // happens on amd64 on later macOS versions (seen on 15.0).
+      // Instead we do a boring memcpy.
+      SyncStats tmp;
+      VG_(memcpy)(&tmp, &syncstats[i-1], sizeof(SyncStats));
+      VG_(memcpy)(&syncstats[i-1], &syncstats[i], sizeof(SyncStats));
+      VG_(memcpy)(&syncstats[i], &tmp, sizeof(SyncStats));
+#else
       SyncStats tmp = syncstats[i-1];
       syncstats[i-1] = syncstats[i];
       syncstats[i] = tmp;
+#endif
    }
 }
 
@@ -1082,16 +1327,6 @@ Bool ML_(sync_mappings)(const HChar* when, const HChar* where, UWord num)
 
 #define CALL_PRE(name) PRE_FN(name)(tid, layout, arrghs, status, flags)
 #define CALL_POST(name) POST_FN(name)(tid, arrghs, status)
-
-#if VG_WORDSIZE == 4
-// Combine two 32-bit values into a 64-bit value
-// Always use with low-numbered arg first (e.g. LOHI64(ARG1,ARG2) )
-# if defined(VGA_x86)
-#  define LOHI64(lo,hi)   ( ((ULong)(UInt)(lo)) | (((ULong)(UInt)(hi)) << 32) )
-# else
-#  error unknown architecture
-# endif
-#endif
 
 // Retrieve the current Mach thread
 #define MACH_THREAD ((Addr)VG_(get_ThreadState)(tid)->os_state.lwpid)
@@ -1549,6 +1784,12 @@ static const HChar *name_for_fcntl(UWord cmd) {
       F(F_BARRIERFSYNC);
       F(F_ADDFILESIGS_RETURN);
 #     endif
+#     if DARWIN_VERS >= DARWIN_10_14
+      F(F_CHECK_LV);
+#     endif
+#     if DARWIN_VERS >= DARWIN_10_15
+      F(F_SPECULATIVE_READ);
+#     endif
    default:
       return "UNKNOWN";
    }
@@ -1744,6 +1985,36 @@ PRE(fcntl)
    case VKI_F_ADDFILESIGS_RETURN: /* Add signature from same file, return end offset in 
                                      structure on success */
       // FIXME: RK
+      break;
+#  endif
+
+#  if DARWIN_VERS >= DARWIN_10_14
+   case VKI_F_CHECK_LV: /* Check if Library Validation allows this Mach-O file to be
+                           mapped into the calling process */
+      // FIXME: Dejan
+      break;
+#  endif
+
+#  if DARWIN_VERS >= DARWIN_10_15
+   case VKI_F_SPECULATIVE_READ: /* Synchronous advisory read fcntl for regular and compressed file */
+      PRINT("fcntl ( %lu, %s, %#lx )", ARG1, name_for_fcntl(ARG2), ARG3);
+      PRE_REG_READ3(long, "fcntl",
+                    unsigned int, fd, unsigned int, cmd,
+                    fspecread_t *, args);
+
+      {
+        fspecread_t *fspecread = (fspecread_t *)ARG3;
+        PRE_FIELD_READ( "fcntl(VKI_F_SPECULATIVE_READ, fspecread->fsr_flags)",
+                         fspecread->fsr_flags);
+        PRE_FIELD_READ( "fcntl(VKI_F_SPECULATIVE_READ, fspecread->fsr_offset)",
+                        fspecread->fsr_offset);
+        PRE_FIELD_READ( "fcntl(VKI_F_SPECULATIVE_READ, fspecread->fsr_length)",
+                        fspecread->fsr_length);
+
+        if (fspecread->fsr_offset < 0 || fspecread->fsr_length < 0) {
+          SET_STATUS_Failure( VKI_EINVAL );
+        }
+      }
       break;
 #  endif
 
@@ -1950,6 +2221,7 @@ PRE(kqueue)
 
 POST(kqueue)
 {
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "kqueue", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -1980,6 +2252,7 @@ PRE(guarded_kqueue_np)
 
 POST(guarded_kqueue_np)
 {
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "guarded_kqueue_np", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -2018,7 +2291,7 @@ PRE(disconnectx)
 PRE(kevent)
 {
    PRINT("kevent( %ld, %#lx, %ld, %#lx, %ld, %#lx )", 
-         SARG1, ARG2, ARG3, ARG4, ARG5, ARG6);
+         SARG1, ARG2, SARG3, ARG4, SARG5, ARG6);
    PRE_REG_READ6(int,"kevent", int,kq, 
                  const struct vki_kevent *,changelist, int,nchanges, 
                  struct vki_kevent *,eventlist, int,nevents, 
@@ -2036,7 +2309,7 @@ PRE(kevent)
 
 POST(kevent)
 {
-   PRINT("kevent ret %ld dst %#lx (%zu)", RES, ARG4, sizeof(struct vki_kevent));
+   PRINT("kevent ret %ld dst %#lx (%zu)", (Word)RES, ARG4, sizeof(struct vki_kevent));
    if (RES > 0) POST_MEM_WRITE(ARG4, RES * sizeof(struct vki_kevent));
 }
 
@@ -2073,16 +2346,38 @@ POST(kevent64)
 Addr pthread_starter = 0;
 Addr wqthread_starter = 0;
 SizeT pthread_structsize = 0;
+SizeT pthread_tsd_offset = 0;
 
 PRE(bsdthread_register)
 {
+#if DARWIN_VERS >= DARWIN_10_12
+   PRINT("bsdthread_register( %#lx, %#lx, %lu, %#lx, %#lx, %#lx, %#lx )",
+         ARG1, ARG2, ARG3, ARG4, ARG5, ARG6, ARG7);
+   PRE_REG_READ7(int,"__bsdthread_register", void *,"threadstart",
+                 void *,"wqthread", size_t,"pthsize",
+                 void *,"stack_addr_hint", void *,"targetconc_ptr",
+                 uint32_t,"dispatchqueue_offset", uint32_t,"tsd_offset");
+#else
    PRINT("bsdthread_register( %#lx, %#lx, %lu )", ARG1, ARG2, ARG3);
    PRE_REG_READ3(int,"__bsdthread_register", void *,"threadstart", 
                  void *,"wqthread", size_t,"pthsize");
+#endif
 
    pthread_starter = ARG1;
    wqthread_starter = ARG2;
    pthread_structsize = ARG3;
+#if DARWIN_VERS >= DARWIN_10_12
+    typedef struct {
+       uint64_t version;
+       uint64_t dispatch_queue_offset;
+       uint64_t main_qos;
+       uint32_t tsd_offset;
+       uint32_t return_to_kernel_offset;
+       uint32_t mach_thread_self_offset;
+    } __attribute__ ((packed)) _pthread_registration_data;
+
+    pthread_tsd_offset = ((_pthread_registration_data*) ARG4)->tsd_offset;
+#endif
    ARG1 = (Word)&pthread_hijack_asm;
    ARG2 = (Word)&wqthread_hijack_asm;
 }
@@ -2110,6 +2405,7 @@ static const HChar *workqop_name(int op)
    case VKI_WQOPS_SET_EVENT_MANAGER_PRIORITY: return "SET_EVENT_MANAGER_PRIORITY";
    case VKI_WQOPS_THREAD_WORKLOOP_RETURN:     return "THREAD_WORKLOOP_RETURN";
    case VKI_WQOPS_SHOULD_NARROW:              return "SHOULD_NARROW";
+   case VKI_WQOPS_SETUP_DISPATCH:             return "SETUP_DISPATCH";
    default: return "?";
    }
 }
@@ -2128,6 +2424,8 @@ PRE(workq_ops)
       // GrP fixme need anything here?
       // GrP fixme may block?
       break;
+   case VKI_WQOPS_THREAD_KEVENT_RETURN:
+   case VKI_WQOPS_THREAD_WORKLOOP_RETURN:
    case VKI_WQOPS_THREAD_RETURN: {
       // The interesting case. The kernel will do one of two things:
       // 1. Return normally. We continue; libc proceeds to stop the thread.
@@ -2157,24 +2455,41 @@ PRE(workq_ops)
       // JRS uh, looks like it queues up a bunch of threads, or some such?
       *flags |= SfMayBlock; // the kernel sources take a spinlock, so play safe
       break;
-   case VKI_WQOPS_THREAD_KEVENT_RETURN:
-      // RK fixme need anything here?
-      // perhaps similar to VKI_WQOPS_THREAD_RETURN above?
-      break;
    case VKI_WQOPS_SET_EVENT_MANAGER_PRIORITY:
       // RK fixme this just sets scheduling priorities - don't think we need
       // to do anything here
       break;
-   case VKI_WQOPS_THREAD_WORKLOOP_RETURN:
    case VKI_WQOPS_SHOULD_NARROW:
       // RK fixme need anything here?
       // RK fixme may block?
       break;
+   case VKI_WQOPS_SETUP_DISPATCH: {
+      // docs says: setup pthread workqueue-related operations
+#if DARWIN_VERS >= DARWIN_10_15
+#pragma pack(4)
+      struct workq_dispatch_config {
+        uint32_t wdc_version;
+        uint32_t wdc_flags;
+        uint64_t wdc_queue_serialno_offs;
+        uint64_t wdc_queue_label_offs;
+      };
+#pragma pack()
+      PRE_MEM_READ("workq_ops(item)", ARG2, MIN(sizeof(struct workq_dispatch_config), SARG3));
+      struct workq_dispatch_config* cfg = (struct workq_dispatch_config*)ARG2;
+      if (cfg->wdc_flags & ~VKI_WORKQ_DISPATCH_SUPPORTED_FLAGS ||
+          cfg->wdc_version < VKI_WORKQ_DISPATCH_MIN_SUPPORTED_VERSION) {
+        SET_STATUS_Failure( VKI_ENOTSUP );
+      }
+#endif
+      break;
+   }
    default:
-      VG_(printf)("UNKNOWN workq_ops option %ld\n", ARG1);
+      PRINT("workq_ops ( %lu [??], ... )", ARG1);
+      log_decaying("UNKNOWN workq_ops option %lu!", ARG1);
       break;
    }
 }
+
 POST(workq_ops)
 {
    ThreadState *tst = VG_(get_ThreadState)(tid);
@@ -2213,12 +2528,9 @@ PRE(__mac_syscall)
 PRE(exit)
 {
    ThreadId     t;
-   ThreadState* tst;
 
    PRINT("darwin exit( %ld )", SARG1);
    PRE_REG_READ1(void, "exit", int, status);
-
-   tst = VG_(get_ThreadState)(tid);
 
    /* A little complex; find all the threads with the same threadgroup
       as this one (including this one), and mark them to exit */
@@ -2325,6 +2637,30 @@ POST(__pthread_sigmask)
 }
 
 
+// SYS___sigwait 330
+// int  sigwait(const sigset_t * __restrict, int * __restrict) __DARWIN_ALIAS_C(sigwait);
+PRE(__sigwait)
+{
+    *flags |= SfMayBlock;
+    PRINT("__sigwait ( %#" FMT_REGWORD "x, %#" FMT_REGWORD "x )",
+          ARG1,ARG2);
+    PRE_REG_READ2(int, "sigwait",
+                  const vki_sigset_t *, set, int *, sig);
+    if (ARG1 != 0) {
+        PRE_MEM_READ(  "sigwait(set)",  ARG1, sizeof(vki_sigset_t));
+    }
+    if (ARG2 != 0) {
+        PRE_MEM_WRITE( "sigwait(sig)", ARG2, sizeof(int));
+    }
+}
+
+POST(__sigwait)
+{
+    if (ARG2 != 0) {
+        POST_MEM_WRITE( ARG2, sizeof(int));
+    }
+}
+
 PRE(__pthread_canceled)
 {
    *flags |= SfMayBlock; /* might kill this thread??? */
@@ -2377,6 +2713,8 @@ PRE(__pthread_fchdir)
 {
     PRINT("__pthread_fchdir ( %lu )", ARG1);
     PRE_REG_READ1(long, "__pthread_fchdir", unsigned int, fd);
+    if (!ML_(fd_allowed)(ARG1, "__pthread_chdir", tid, False))
+       SET_STATUS_Failure(VKI_EBADF);
 }
 
 
@@ -2492,6 +2830,8 @@ PRE(fgetxattr)
    PRE_REG_READ6(vki_ssize_t, "fgetxattr",
                  int, fd, char *, name, void *, value,
                  vki_size_t, size, uint32_t, position, int, options);
+   if (!ML_(fd_allowed)(ARG1, "fgetxattr", tid, False))
+      SET_STATUS_Failure(VKI_EBADF);
    PRE_MEM_RASCIIZ("getxattr(name)", ARG2);
    PRE_MEM_WRITE( "getxattr(value)", ARG3, ARG4);
 }
@@ -2523,7 +2863,8 @@ PRE(fsetxattr)
    PRE_REG_READ6(int, "fsetxattr", 
                  int,"fd", char *,"name", void *,"value", 
                  vki_size_t,"size", uint32_t,"position", int,"options" );
-   
+   if (!ML_(fd_allowed)(ARG1, "fsetxattr", tid, False))
+      SET_STATUS_Failure(VKI_EBADF);
    PRE_MEM_RASCIIZ( "fsetxattr(name)", ARG2 );
    PRE_MEM_READ( "fsetxattr(value)", ARG3, ARG4 );
 }
@@ -2546,6 +2887,8 @@ PRE(fremovexattr)
           SARG1, ARG2, (HChar*)ARG2, SARG3 );
    PRE_REG_READ3(int, "fremovexattr",
                  int, "fd", char*, "attrname", int, "options");
+   if (!ML_(fd_allowed)(ARG1, "fremovextattr", tid, False))
+      SET_STATUS_Failure(VKI_EBADF);
    PRE_MEM_RASCIIZ( "removexattr(attrname)", ARG2 );
 }
 
@@ -2577,6 +2920,8 @@ PRE(flistxattr)
    PRE_REG_READ4 (long, "flistxattr", 
                   int, "fd", char *,"namebuf", 
                  vki_size_t,"size", int,"options" );
+   if (!ML_(fd_allowed)(ARG1, "flistxtattr", tid, False))
+      SET_STATUS_Failure(VKI_EBADF);
    PRE_MEM_WRITE( "flistxattr(namebuf)", ARG2, ARG3 );
    *flags |= SfMayBlock;
 }
@@ -2648,6 +2993,7 @@ PRE(shm_open)
 POST(shm_open)
 {
    vg_assert(SUCCESS);
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "shm_open", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -2726,6 +3072,7 @@ PRE(fstat_extended)
       PRE_MEM_WRITE("fstat_extended(fsacl)",      ARG3, *(vki_size_t *)ARG4 );
    PRE_MEM_READ(    "fstat_extended(fsacl_size)", ARG4, sizeof(vki_size_t) );
 }
+
 POST(fstat_extended)
 {
    POST_MEM_WRITE( ARG2, sizeof(struct vki_stat) );
@@ -2747,6 +3094,7 @@ PRE(stat64_extended)
       PRE_MEM_WRITE("stat64_extended(fsacl)",      ARG3, *(vki_size_t *)ARG4 );
    PRE_MEM_READ(    "stat64_extended(fsacl_size)", ARG4, sizeof(vki_size_t) );
 }
+
 POST(stat64_extended)
 {
    POST_MEM_WRITE( ARG2, sizeof(struct vki_stat64) );
@@ -2754,7 +3102,6 @@ POST(stat64_extended)
       POST_MEM_WRITE( ARG3, *(vki_size_t *)ARG4 );
    POST_MEM_WRITE( ARG4, sizeof(vki_size_t) );
 }
-
 
 PRE(lstat64_extended)
 {
@@ -2764,10 +3111,11 @@ PRE(lstat64_extended)
                  void *, fsacl, vki_size_t *, fsacl_size);
    PRE_MEM_RASCIIZ( "lstat64_extended(file_name)",  ARG1 );
    PRE_MEM_WRITE(   "lstat64_extended(buf)",        ARG2, sizeof(struct vki_stat64) );
-   if (ML_(safe_to_deref)( (void*)ARG4, sizeof(vki_size_t) ))
+   if ( ML_(safe_to_deref)( (void*)ARG4, sizeof(vki_size_t) ))
       PRE_MEM_WRITE(   "lstat64_extended(fsacl)",   ARG3, *(vki_size_t *)ARG4 );
    PRE_MEM_READ(    "lstat64_extended(fsacl_size)", ARG4, sizeof(vki_size_t) );
 }
+
 POST(lstat64_extended)
 {
    POST_MEM_WRITE( ARG2, sizeof(struct vki_stat64) );
@@ -2788,6 +3136,7 @@ PRE(fstat64_extended)
       PRE_MEM_WRITE("fstat64_extended(fsacl)",      ARG3, *(vki_size_t *)ARG4 );
    PRE_MEM_READ(    "fstat64_extended(fsacl_size)", ARG4, sizeof(vki_size_t) );
 }
+
 POST(fstat64_extended)
 {
    POST_MEM_WRITE( ARG2, sizeof(struct vki_stat64) );
@@ -2970,10 +3319,34 @@ PRE(stat64)
    PRE_REG_READ2(long, "stat", const char *,path, struct stat64 *,buf);
    PRE_MEM_RASCIIZ("stat64(path)", ARG1);
    PRE_MEM_WRITE( "stat64(buf)", ARG2, sizeof(struct vki_stat64) );
+
+#if DARWIN_VERS >= DARWIN_11_00
+   // Starting with macOS 11.0, some system libraries are not provided on the disk but only though
+   // shared dyld cache, thus we try to detect if dyld tried (and failed) to load a dylib,
+   // in which case we do the same thing as dyld and load the info from the cache directly
+   //
+   // This is our entry point for checking a particular dylib: if it looks like one,
+   // we want to see the error result, if any, and subsequently check the cache
+   if (ARG1 != 0 && VG_(dyld_cache_might_be_in)((HChar *)ARG1)) {
+     *flags |= SfPostOnFail;
+   }
+#endif
 }
 POST(stat64)
 {
-   POST_MEM_WRITE( ARG2, sizeof(struct vki_stat64) );
+   if (SUCCESS) {
+      POST_MEM_WRITE( ARG2, sizeof(struct vki_stat64) );
+   }
+
+#if DARWIN_VERS >= DARWIN_11_00
+   if (SUCCESS || (FAILURE && ERR == VKI_ENOENT)) {
+     // It failed and `SfPostOnFail` was set, thus this is probably a dylib,
+     // try to load it from cache which will call VG_(di_notify_mmap) like the previous versions did
+     if (VG_(dyld_cache_load_library)((HChar *)ARG1)) {
+       ML_(sync_mappings)("after", "stat64", 0);
+     }
+   }
+#endif
 }
 
 PRE(lstat64)
@@ -3041,7 +3414,7 @@ PRE(mount)
    // We are conservative and check everything, except the memory pointed to
    // by 'data'.
    *flags |= SfMayBlock;
-   PRINT("sys_mount( %#lx(%s), %#lx(%s), %#lx, %#lx )",
+   PRINT("mount( %#lx(%s), %#lx(%s), %#lx, %#lx )",
          ARG1, (HChar*)ARG1, ARG2, (HChar*)ARG2, ARG3, ARG4);
    PRE_REG_READ4(long, "mount",
                  const char *, type, const char *, dir,
@@ -3065,38 +3438,47 @@ static void scan_attrlist(ThreadId tid, struct vki_attrlist *attrList,
 #if DARWIN_VERS >= DARWIN_10_6
       { ATTR_CMN_RETURNED_ATTRS,  sizeof(attribute_set_t) }, 
 #endif
-      { ATTR_CMN_NAME,            -1 }, 
-      { ATTR_CMN_DEVID,           sizeof(dev_t) }, 
-      { ATTR_CMN_FSID,            sizeof(fsid_t) }, 
-      { ATTR_CMN_OBJTYPE,         sizeof(fsobj_type_t) }, 
-      { ATTR_CMN_OBJTAG,          sizeof(fsobj_tag_t) }, 
-      { ATTR_CMN_OBJID,           sizeof(fsobj_id_t) }, 
-      { ATTR_CMN_OBJPERMANENTID,  sizeof(fsobj_id_t) }, 
-      { ATTR_CMN_PAROBJID,        sizeof(fsobj_id_t) }, 
-      { ATTR_CMN_SCRIPT,          sizeof(text_encoding_t) }, 
-      { ATTR_CMN_CRTIME,          sizeof(struct timespec) }, 
-      { ATTR_CMN_MODTIME,         sizeof(struct timespec) }, 
-      { ATTR_CMN_CHGTIME,         sizeof(struct timespec) }, 
-      { ATTR_CMN_ACCTIME,         sizeof(struct timespec) }, 
-      { ATTR_CMN_BKUPTIME,        sizeof(struct timespec) }, 
-      { ATTR_CMN_FNDRINFO,        32 /*FileInfo+ExtendedFileInfo, or FolderInfo+ExtendedFolderInfo*/ }, 
-      { ATTR_CMN_OWNERID,         sizeof(uid_t) }, 
-      { ATTR_CMN_GRPID,           sizeof(gid_t) }, 
-      { ATTR_CMN_ACCESSMASK,      sizeof(uint32_t) }, 
-      { ATTR_CMN_NAMEDATTRCOUNT,  sizeof(uint32_t) }, 
-      { ATTR_CMN_NAMEDATTRLIST,   -1 }, 
-      { ATTR_CMN_FLAGS,           sizeof(uint32_t) }, 
-      { ATTR_CMN_USERACCESS,      sizeof(uint32_t) }, 
-      { ATTR_CMN_EXTENDED_SECURITY, -1 }, 
-      { ATTR_CMN_UUID,            sizeof(guid_t) }, 
-      { ATTR_CMN_GRPUUID,         sizeof(guid_t) }, 
-      { ATTR_CMN_FILEID,          sizeof(uint64_t) }, 
-      { ATTR_CMN_PARENTID,        sizeof(uint64_t) }, 
+      { ATTR_CMN_NAME,            -1 },
+      { ATTR_CMN_DEVID,           sizeof(dev_t) },
+      { ATTR_CMN_FSID,            sizeof(fsid_t) },
+      { ATTR_CMN_OBJTYPE,         sizeof(fsobj_type_t) },
+      { ATTR_CMN_OBJTAG,          sizeof(fsobj_tag_t) },
+      { ATTR_CMN_OBJID,           sizeof(fsobj_id_t) },
+      { ATTR_CMN_OBJPERMANENTID,  sizeof(fsobj_id_t) },
+      { ATTR_CMN_PAROBJID,        sizeof(fsobj_id_t) },
+      { ATTR_CMN_SCRIPT,          sizeof(text_encoding_t) },
+      { ATTR_CMN_CRTIME,          sizeof(struct timespec) },
+      { ATTR_CMN_MODTIME,         sizeof(struct timespec) },
+      { ATTR_CMN_CHGTIME,         sizeof(struct timespec) },
+      { ATTR_CMN_ACCTIME,         sizeof(struct timespec) },
+      { ATTR_CMN_BKUPTIME,        sizeof(struct timespec) },
+      { ATTR_CMN_FNDRINFO,        32 /*FileInfo+ExtendedFileInfo, or FolderInfo+ExtendedFolderInfo*/ },
+      { ATTR_CMN_OWNERID,         sizeof(uid_t) },
+      { ATTR_CMN_GRPID,           sizeof(gid_t) },
+      { ATTR_CMN_ACCESSMASK,      sizeof(uint32_t) },
+#if DARWIN_VERS >= DARWIN_10_15
+      { ATTR_CMN_GEN_COUNT,       sizeof(uint32_t) },
+      { ATTR_CMN_DOCUMENT_ID,     sizeof(uint32_t) },
+#else
+      { ATTR_CMN_NAMEDATTRCOUNT,  sizeof(uint32_t) },
+      { ATTR_CMN_NAMEDATTRLIST,   -1 },
+#endif
+      { ATTR_CMN_FLAGS,           sizeof(uint32_t) },
+      { ATTR_CMN_USERACCESS,      sizeof(uint32_t) },
+      { ATTR_CMN_EXTENDED_SECURITY, -1 },
+      { ATTR_CMN_UUID,            sizeof(guid_t) },
+      { ATTR_CMN_GRPUUID,         sizeof(guid_t) },
+      { ATTR_CMN_FILEID,          sizeof(uint64_t) },
+      { ATTR_CMN_PARENTID,        sizeof(uint64_t) },
 #if DARWIN_VERS >= DARWIN_10_6
       { ATTR_CMN_FULLPATH,        -1 }, 
 #endif
 #if DARWIN_VERS >= DARWIN_10_8
-      { ATTR_CMN_ADDEDTIME,       -1 }, 
+      { ATTR_CMN_ADDEDTIME,       -1 },
+#endif
+#if DARWIN_VERS >= DARWIN_10_15
+      { ATTR_CMN_ERROR,           sizeof(uint32_t) },
+      { ATTR_CMN_DATA_PROTECT_FLAGS, sizeof(uint32_t) },
 #endif
       { 0,                        0 }
    };
@@ -3124,14 +3506,23 @@ static void scan_attrlist(ThreadId tid, struct vki_attrlist *attrList,
 #if DARWIN_VERS >= DARWIN_10_6
       { ATTR_VOL_UUID,            sizeof(uuid_t) }, 
 #endif
-      { ATTR_VOL_ATTRIBUTES,      sizeof(vol_attributes_attr_t) }, 
+#if DARWIN_VERS >= DARWIN_10_15
+      { ATTR_VOL_QUOTA_SIZE,      sizeof(off_t) },
+      { ATTR_VOL_RESERVED_SIZE,   sizeof(off_t) },
+#endif
+      { ATTR_VOL_ATTRIBUTES,      sizeof(vol_attributes_attr_t) },
       { 0,                        0 }
    };
    static const attrspec dirattr[] = {
       // This order is important.
-      { ATTR_DIR_LINKCOUNT,       sizeof(uint32_t) }, 
-      { ATTR_DIR_ENTRYCOUNT,      sizeof(uint32_t) }, 
-      { ATTR_DIR_MOUNTSTATUS,     sizeof(uint32_t) }, 
+      { ATTR_DIR_LINKCOUNT,       sizeof(uint32_t) },
+      { ATTR_DIR_ENTRYCOUNT,      sizeof(uint32_t) },
+      { ATTR_DIR_MOUNTSTATUS,     sizeof(uint32_t) },
+#if DARWIN_VERS >= DARWIN_10_15
+      { ATTR_DIR_ALLOCSIZE,       sizeof(off_t) },
+      { ATTR_DIR_IOBLOCKSIZE,     sizeof(uint32_t) },
+      { ATTR_DIR_DATALENGTH,      sizeof(off_t) },
+#endif
       { 0,                        0 }
    };
    static const attrspec fileattr[] = {
@@ -3155,8 +3546,18 @@ static void scan_attrlist(ThreadId tid, struct vki_attrlist *attrList,
    };
    static const attrspec forkattr[] = {
       // This order is important.
-      { ATTR_FORK_TOTALSIZE,      sizeof(off_t) }, 
-      { ATTR_FORK_ALLOCSIZE,      sizeof(off_t) }, 
+      { ATTR_FORK_TOTALSIZE,      sizeof(off_t) },
+      { ATTR_FORK_ALLOCSIZE,      sizeof(off_t) },
+#if DARWIN_VERS >= DARWIN_10_15
+      { ATTR_CMNEXT_RELPATH,      sizeof(struct attrreference) },
+      { ATTR_CMNEXT_PRIVATESIZE,  sizeof(off_t) },
+      { ATTR_CMNEXT_LINKID,       sizeof(uint64_t) },
+      { ATTR_CMNEXT_NOFIRMLINKPATH,  sizeof(struct attrreference) },
+      { ATTR_CMNEXT_REALDEVID,    sizeof(uint32_t) },
+      { ATTR_CMNEXT_REALFSID,     sizeof(fsid_t) },
+      { ATTR_CMNEXT_CLONEID,      sizeof(uint64_t) },
+      { ATTR_CMNEXT_EXT_FLAGS,    sizeof(uint64_t) },
+#endif
       { 0,                        0 }
    };
 
@@ -3457,7 +3858,9 @@ PRE(posix_spawn)
 
    PRE_REG_READ5(int, "posix_spawn", vki_pid_t*, pid, char*, path,
                  void*, file_actions, char**, argv, char**, envp );
-   PRE_MEM_WRITE("posix_spawn(pid)", ARG1, sizeof(vki_pid_t) );
+   if (ARG1 != 0) {
+      PRE_MEM_WRITE("posix_spawn(pid)", ARG1, sizeof(vki_pid_t) );
+   }
    PRE_MEM_RASCIIZ("posix_spawn(path)", ARG2);
    // DDD: check file_actions
    if (ARG4 != 0)
@@ -4287,7 +4690,7 @@ POST(mmap)
       ML_(notify_core_and_tool_of_mmap)(RES, ARG2, ARG3, ARG4, ARG5, ARG6);
       // Try to load symbols from the region
       VG_(di_notify_mmap)( (Addr)RES, False/*allow_SkFileV*/,
-                           -1/*don't use_fd*/ );
+                           ARG5 );
       ML_(sync_mappings)("after", "mmap", 0);
    }
 }
@@ -4580,31 +4983,27 @@ static void aio_init(void)
    aio_init_done = True;
 }
 
-static Bool was_a_successful_aio_read = False;
-
 PRE(aio_return)
 {
-   struct vki_aiocb* aiocbp = (struct vki_aiocb*)ARG1;
    // This assumes that the kernel looks at the struct pointer, but not the
    // contents of the struct.
    PRINT( "aio_return ( %#lx )", ARG1 );
    PRE_REG_READ1(long, "aio_return", struct vki_aiocb*, aiocbp);
-
-   if (!aio_init_done) aio_init();
-   was_a_successful_aio_read = VG_(OSetWord_Remove)(aiocbp_table, (UWord)aiocbp);
-}
-POST(aio_return)
-{
-   // If we found the aiocbp in our own table it must have been an aio_read(),
-   // so mark the buffer as written.  If we didn't find it, it must have been
-   // an aio_write() or a bogus aio_return() (eg. a second one on the same
-   // aiocbp).  Either way, the buffer won't have been written so we don't
-   // have to mark the buffer as written.
-   if (was_a_successful_aio_read) {
-      struct vki_aiocb* aiocbp = (struct vki_aiocb*)ARG1;
-      POST_MEM_WRITE((Addr)aiocbp->aio_buf, aiocbp->aio_nbytes);
-      was_a_successful_aio_read = False;
+   if (ML_(safe_to_deref)((struct vki_aiocb *)ARG1, sizeof(struct vki_aiocb))) {
+      SET_STATUS_from_SysRes(VG_(do_syscall1)(SYSNO, ARG1));
+      if (SUCCESS && RES >= 0) {
+         struct vki_aiocb* aiocbp = (struct vki_aiocb*)ARG1;
+         if (!aio_init_done) {
+            aio_init();
+         }
+         if (VG_(OSetWord_Remove)(aiocbp_table, (UWord)aiocbp)) {
+            POST_MEM_WRITE((Addr)aiocbp->aio_buf, aiocbp->aio_nbytes);
+         }
+      }
+   } else {
+      SET_STATUS_Failure(VKI_EINVAL);
    }
+
 }
 
 PRE(aio_suspend)
@@ -4613,12 +5012,14 @@ PRE(aio_suspend)
    // but not the contents of the structs.
    PRINT( "aio_suspend ( %#lx )", ARG1 );
    PRE_REG_READ3(long, "aio_suspend",
-                 const struct vki_aiocb *, aiocbp, int, nent,
+                 const struct vki_aiocb * const *, aiocbp, int, nent,
                  const struct vki_timespec *, timeout);
-   if (ARG2 > 0)
+   if (ARG2 > 0) {
       PRE_MEM_READ("aio_suspend(list)", ARG1, ARG2 * sizeof(struct vki_aiocb *));
-   if (ARG3)
+   }
+   if (ARG3) {
       PRE_MEM_READ ("aio_suspend(timeout)", ARG3, sizeof(struct vki_timespec));
+   }
 }
 
 PRE(aio_error)
@@ -5018,11 +5419,11 @@ POST(host_get_io_master)
 
 PRE(host_get_io_master)
 {
-#pragma pack(4)
-   typedef struct {
-      mach_msg_header_t Head;
-   } Request;
-#pragma pack()
+//#pragma pack(4)
+//   typedef struct {
+//      mach_msg_header_t Head;
+//   } Request;
+//#pragma pack()
 
    // Request *req = (Request *)ARG1;
 
@@ -5046,6 +5447,7 @@ POST(host_get_clock_service)
 
    Reply *reply = (Reply *)ARG1;
 
+   record_named_port(tid, reply->clock_serv.name, -1, "clock-%p");
    assign_port_name(reply->clock_serv.name, "clock-%p");
    PRINT("%s", name_for_port(reply->clock_serv.name));
 }
@@ -5102,7 +5504,8 @@ PRE(host_request_notification)
    }
 
     // GrP fixme only do this on success
-   assign_port_name(req->notify_port.name, "host_notify-%p");
+   // PJF moved to POST(mach_msg_post)
+   //assign_port_name(req->notify_port.name, "host_notify-%p");
 }
 
 
@@ -5169,8 +5572,8 @@ PRE(host_get_special_port)
             PRINT("host_get_special_port(%s, HOST_PRIV_PORT)",
                   name_for_port(MACH_REMOTE));
             break;
-        case HOST_IO_MASTER_PORT:
-            PRINT("host_get_special_port(%s, HOST_IO_MASTER_PORT)",
+        case HOST_IO_MAIN_PORT:
+            PRINT("host_get_special_port(%s, HOST_IO_MAIN_PORT)",
                   name_for_port(MACH_REMOTE));
             break;
         // Not provided by kernel
@@ -5231,7 +5634,7 @@ POST(host_get_special_port)
         case HOST_PRIV_PORT:
             assign_port_name(reply->port.name, "priv-%p");
             break;
-        case HOST_IO_MASTER_PORT:
+        case HOST_IO_MAIN_PORT:
             assign_port_name(reply->port.name, "io-master-%p");
             break;
         // Not provided by kernel
@@ -5286,26 +5689,26 @@ PRE(mach_port_set_context)
 
 POST(mach_port_set_context)
 {
-#pragma pack(4)
-   typedef struct {
-      mach_msg_header_t Head;
-      NDR_record_t NDR;
-      kern_return_t RetCode;
-   } Reply;
-#pragma pack()
+//#pragma pack(4)
+//   typedef struct {
+//      mach_msg_header_t Head;
+//      NDR_record_t NDR;
+//      kern_return_t RetCode;
+//   } Reply;
+//#pragma pack()
 }
 
 
 // JRS 2011-Aug-25 FIXME completely bogus
 PRE(task_get_exception_ports)
 {
-#pragma pack(4)
-   typedef struct {
-      mach_msg_header_t Head;
-      NDR_record_t NDR;
-      exception_mask_t exception_mask;
-   } Request;
-#pragma pack()
+//#pragma pack(4)
+//   typedef struct {
+//      mach_msg_header_t Head;
+//      NDR_record_t NDR;
+//      exception_mask_t exception_mask;
+//   } Request;
+//#pragma pack()
 
    PRINT("task_get_exception_ports(BOGUS)");
    AFTER = POST_FN(task_get_exception_ports);
@@ -5313,20 +5716,20 @@ PRE(task_get_exception_ports)
 
 POST(task_get_exception_ports)
 {
-#pragma pack(4)
-   typedef struct {
-      mach_msg_header_t Head;
-      /* start of the kernel processed data */
-      mach_msg_body_t msgh_body;
-      mach_msg_port_descriptor_t old_handlers[32];
-      /* end of the kernel processed data */
-      NDR_record_t NDR;
-      mach_msg_type_number_t masksCnt;
-      exception_mask_t masks[32];
-      exception_behavior_t old_behaviors[32];
-      thread_state_flavor_t old_flavors[32];
-   } Reply;
-#pragma pack()
+//#pragma pack(4)
+//   typedef struct {
+//      mach_msg_header_t Head;
+//      /* start of the kernel processed data */
+//      mach_msg_body_t msgh_body;
+//      mach_msg_port_descriptor_t old_handlers[32];
+//      /* end of the kernel processed data */
+//      NDR_record_t NDR;
+//      mach_msg_type_number_t masksCnt;
+//      exception_mask_t masks[32];
+//      exception_behavior_t old_behaviors[32];
+//      thread_state_flavor_t old_flavors[32];
+//   } Reply;
+//#pragma pack()
 }
 
 
@@ -5611,18 +6014,18 @@ PRE(mach_port_get_set_status)
 
 POST(mach_port_get_set_status)
 {
-#pragma pack(4)
-   typedef struct {
-      mach_msg_header_t Head;
-      /* start of the kernel processed data */
-      mach_msg_body_t msgh_body;
-      mach_msg_ool_descriptor_t members;
-      /* end of the kernel processed data */
-      NDR_record_t NDR;
-      mach_msg_type_number_t membersCnt;
-      mach_msg_trailer_t trailer;
-   } Reply;
-#pragma pack()
+//#pragma pack(4)
+//   typedef struct {
+//      mach_msg_header_t Head;
+//      /* start of the kernel processed data */
+//      mach_msg_body_t msgh_body;
+//      mach_msg_ool_descriptor_t members;
+//      /* end of the kernel processed data */
+//      NDR_record_t NDR;
+//      mach_msg_type_number_t membersCnt;
+//      mach_msg_trailer_t trailer;
+//   } Reply;
+//#pragma pack()
 
    // Reply *reply = (Reply *)ARG1;
 
@@ -5968,6 +6371,7 @@ POST(task_get_special_port)
    switch (MACH_ARG(task_get_special_port.which_port)) {
    case TASK_BOOTSTRAP_PORT:
       vg_bootstrap_port = reply->special_port.name;
+      record_named_port(tid, reply->special_port.name, -1, "bootstrap");
       assign_port_name(reply->special_port.name, "bootstrap");
       break;
    case TASK_KERNEL_PORT:
@@ -6070,6 +6474,7 @@ POST(semaphore_create)
 
    Reply *reply = (Reply *)ARG1;
 
+   record_named_port(tid, reply->semaphore.name, -1, "semaphore-%p");
    assign_port_name(reply->semaphore.name, "semaphore-%p");
    PRINT("%s", name_for_port(reply->semaphore.name));
 }
@@ -6155,17 +6560,17 @@ POST(task_policy_set)
 
 PRE(mach_ports_register)
 {
-#pragma pack(4)
-    typedef struct {
-       mach_msg_header_t Head;
-       /* start of the kernel processed data */
-       mach_msg_body_t msgh_body;
-       mach_msg_ool_ports_descriptor_t init_port_set;
-       /* end of the kernel processed data */
-       NDR_record_t NDR;
-       mach_msg_type_number_t init_port_setCnt;
-    } Request;
-#pragma pack()
+//#pragma pack(4)
+//    typedef struct {
+//       mach_msg_header_t Head;
+//       /* start of the kernel processed data */
+//       mach_msg_body_t msgh_body;
+//       mach_msg_ool_ports_descriptor_t init_port_set;
+//       /* end of the kernel processed data */
+//       NDR_record_t NDR;
+//       mach_msg_type_number_t init_port_setCnt;
+//    } Request;
+//#pragma pack()
     
     // Request *req = (Request *)ARG1;
     
@@ -6194,11 +6599,11 @@ POST(mach_ports_register)
 
 PRE(mach_ports_lookup)
 {
-#pragma pack(4)
-   typedef struct {
-       mach_msg_header_t Head;
-   } Request;
-#pragma pack()
+//#pragma pack(4)
+//   typedef struct {
+//       mach_msg_header_t Head;
+//   } Request;
+//#pragma pack()
 
    // Request *req = (Request *)ARG1;
 
@@ -6209,17 +6614,17 @@ PRE(mach_ports_lookup)
 
 POST(mach_ports_lookup)
 {
-#pragma pack(4)
-   typedef struct {
-      mach_msg_header_t Head;
-      /* start of the kernel processed data */
-      mach_msg_body_t msgh_body;
-      mach_msg_ool_ports_descriptor_t init_port_set;
-      /* end of the kernel processed data */
-      NDR_record_t NDR;
-      mach_msg_type_number_t init_port_setCnt;
-   } Reply;
-#pragma pack()
+//#pragma pack(4)
+//   typedef struct {
+//      mach_msg_header_t Head;
+//      /* start of the kernel processed data */
+//      mach_msg_body_t msgh_body;
+//      mach_msg_ool_ports_descriptor_t init_port_set;
+//      /* end of the kernel processed data */
+//      NDR_record_t NDR;
+//      mach_msg_type_number_t init_port_setCnt;
+//   } Reply;
+//#pragma pack()
 
     // Reply *reply = (Reply *)ARG1;
 }
@@ -6301,11 +6706,11 @@ POST(task_set_info)
 
 PRE(task_threads)
 {
-#pragma pack(4)
-   typedef struct {
-      mach_msg_header_t Head;
-   } Request;
-#pragma pack()
+//#pragma pack(4)
+//   typedef struct {
+//      mach_msg_header_t Head;
+//   } Request;
+//#pragma pack()
 
    // Request *req = (Request *)ARG1;
 
@@ -6623,17 +7028,17 @@ PRE(vm_read)
 
 POST(vm_read)
 {
-#pragma pack(4)
-   typedef struct {
-      mach_msg_header_t Head;
-      /* start of the kernel processed data */
-      mach_msg_body_t msgh_body;
-      mach_msg_ool_descriptor_t data;
-      /* end of the kernel processed data */
-      NDR_record_t NDR;
-      mach_msg_type_number_t dataCnt;
-   } Reply;
-#pragma pack()
+//#pragma pack(4)
+//   typedef struct {
+//      mach_msg_header_t Head;
+//      /* start of the kernel processed data */
+//      mach_msg_body_t msgh_body;
+//      mach_msg_ool_descriptor_t data;
+//      /* end of the kernel processed data */
+//      NDR_record_t NDR;
+//      mach_msg_type_number_t dataCnt;
+//   } Reply;
+//#pragma pack()
 
    // Reply *reply = (Reply *)ARG1;
 
@@ -6669,17 +7074,17 @@ PRE(mach_vm_read)
 
 POST(mach_vm_read)
 {
-#pragma pack(4)
-   typedef struct {
-      mach_msg_header_t Head;
-      /* start of the kernel processed data */
-      mach_msg_body_t msgh_body;
-      mach_msg_ool_descriptor_t data;
-      /* end of the kernel processed data */
-      NDR_record_t NDR;
-      mach_msg_type_number_t dataCnt;
-   } Reply;
-#pragma pack()
+//#pragma pack(4)
+//   typedef struct {
+//      mach_msg_header_t Head;
+//      /* start of the kernel processed data */
+//      mach_msg_body_t msgh_body;
+//      mach_msg_ool_descriptor_t data;
+//      /* end of the kernel processed data */
+//      NDR_record_t NDR;
+//      mach_msg_type_number_t dataCnt;
+//   } Reply;
+//#pragma pack()
 
    // Reply *reply = (Reply *)ARG1;
 
@@ -8325,6 +8730,12 @@ PRE(mach_msg_task)
       CALL_PRE(mach_vm_purgable_control);
       return;
 
+#if DARWIN_VERS >= DARWIN_10_15
+   case 8000:
+      CALL_PRE(task_restartable_ranges_register);
+      return;
+#endif
+
    default:
       // unknown message to task self
       log_decaying("UNKNOWN task message [id %d, to %s, reply 0x%x]",
@@ -8404,10 +8815,10 @@ PRE(mach_msg)
    // mach_port_t rcv_name = (mach_port_t)ARG5;
    size_t complex_header_size = 0;
 
-   PRE_REG_READ7(long, "mach_msg", 
-                 mach_msg_header_t*,"msg", mach_msg_option_t,"option", 
-                 mach_msg_size_t,"send_size", mach_msg_size_t,"rcv_size", 
-                 mach_port_t,"rcv_name", mach_msg_timeout_t,"timeout", 
+   PRE_REG_READ7(long, "mach_msg",
+                 mach_msg_header_t*,"msg", mach_msg_option_t,"option",
+                 mach_msg_size_t,"send_size", mach_msg_size_t,"rcv_size",
+                 mach_port_t,"rcv_name", mach_msg_timeout_t,"timeout",
                  mach_port_t,"notify");
 
    // Assume default POST handler until specified otherwise
@@ -8464,6 +8875,7 @@ PRE(mach_msg)
    else if (mh->msgh_request_port == vg_host_port) {
       // message sent to mach_host_self()
       CALL_PRE(mach_msg_host);
+      AFTER = POST_FN(mach_msg_host);
       return;
    }
    else if (is_task_port(mh->msgh_request_port)) {
@@ -8664,6 +9076,34 @@ POST(mach_msg_unhandled_check)
       PRINT("mach_msg_unhandled_check tid:%d missed mapping change()", tid);
 }
 
+POST(mach_msg_host)
+{
+   mach_msg_header_t *mh = (mach_msg_header_t *)ARG1;
+
+   // FIXME PJF put this in a header rather than have a copy and paste duplicate
+#pragma pack(4)
+   typedef struct {
+      mach_msg_header_t Head;
+      /* start of the kernel processed data */
+      mach_msg_body_t msgh_body;
+      mach_msg_port_descriptor_t notify_port;
+      /* end of the kernel processed data */
+      NDR_record_t NDR;
+      host_flavor_t notify_type;
+   } Request;
+#pragma pack()
+
+   switch (mh->msgh_id) {
+   case 217: {
+         Request *req = (Request *)ARG1;
+         assign_port_name(req->notify_port.name, "host_notify-%p");
+      }
+      break;
+   default:
+      break;
+   }
+}
+
 
 /* ---------------------------------------------------------------------
    other Mach traps
@@ -8836,6 +9276,25 @@ PRE(__semwait_signal)
 //   *flags |= SfMayBlock;
 //}
 
+PRE(task_name_for_pid)
+{
+   PRINT("task_name_for_pid(%s, %ld, %#lx)", name_for_port(ARG1), SARG2, ARG3);
+   PRE_REG_READ3(long, "task_name_for_pid",
+                 mach_port_t,"target",
+                 vki_pid_t, "pid", mach_port_t *,"task");
+   PRE_MEM_WRITE("task_name_for_pid(task)", ARG3, sizeof(mach_port_t));
+}
+
+POST(task_name_for_pid)
+{
+   mach_port_t task;
+
+   POST_MEM_WRITE(ARG3, sizeof(mach_port_t));
+
+   task = *(mach_port_t *)ARG3;
+   record_named_port(tid, task, MACH_PORT_RIGHT_SEND, "task-name-%p");
+   PRINT("task-name %#x", task);
+}
 
 PRE(task_for_pid)
 {
@@ -9002,7 +9461,7 @@ PRE(swtch_pri)
 }
 
 
-PRE(FAKE_SIGRETURN)
+PRE(fake_sigreturn)
 {
    /* See comments on PRE(sys_rt_sigreturn) in syswrap-amd64-linux.c for
       an explanation of what follows. */
@@ -9010,7 +9469,7 @@ PRE(FAKE_SIGRETURN)
       sigframe-x86-darwin.c. */
    /* See also comments just below on PRE(sigreturn). */
 
-   PRINT("FAKE_SIGRETURN ( )");
+   PRINT("fake_sigreturn ( )");
 
    vg_assert(VG_(is_valid_tid)(tid));
    vg_assert(tid >= 1 && tid < VG_N_THREADS);
@@ -9051,7 +9510,7 @@ PRE(sigreturn)
          a per-thread on-altstack/not-on-altstack flag, which is set
          by this flag.  Just ignore it and claim success for the time
          being. */
-      VG_(debugLog)(0, "syswrap-darwin",
+      VG_(debugLog)(1, "syswrap-darwin",
                        "WARNING: Ignoring sigreturn( ..., "
                        "UC_SET_ALT_STACK );\n");
       SET_STATUS_Success(0);
@@ -9059,7 +9518,7 @@ PRE(sigreturn)
    }
    if (ARG2 == VKI_UC_RESET_ALT_STACK) {
       /* Ditto */
-      VG_(debugLog)(0, "syswrap-darwin",
+      VG_(debugLog)(1, "syswrap-darwin",
                        "WARNING: Ignoring sigreturn( ..., "
                        "UC_RESET_ALT_STACK );\n");
       SET_STATUS_Success(0);
@@ -9074,10 +9533,10 @@ PRE(sigreturn)
       1. Change the second argument of VG_(sigframe_destroy) from
          "Bool isRT" to "UInt sysno", so we can pass the syscall
          number, so it can distinguish this case from the
-         __NR_DARWIN_FAKE_SIGRETURN case.
+         __NR_darwin_fake_sigreturn case.
 
       2. In VG_(sigframe_destroy), look at sysno to distinguish the
-         cases.  For __NR_DARWIN_FAKE_SIGRETURN, behave as at present.
+         cases.  For __NR_darwin_fake_sigreturn, behave as at present.
          For this case, restore the thread's CPU state (or at least
          the integer regs) from the ucontext in ARG1 (and do all the
          other "signal-returns" stuff too).
@@ -9304,6 +9763,31 @@ POST(audit_session_self)
   PRINT("audit-session %#lx", RES);
 }
 
+PRE(fgetattrlist)
+{
+   PRINT("fgetattrlist(%ld, %#lx, %#lx, %lu, %lu)",
+         ARG1, ARG2, ARG3, ARG4, ARG5);
+   PRE_REG_READ5(int, "fgetattrlist",
+                 int,fd, struct vki_attrlist *,attrList,
+                 void *,attrBuf, vki_size_t,attrBufSize, unsigned int,options);
+   PRE_MEM_READ("fgetattrlist(attrList)", ARG2, sizeof(struct vki_attrlist));
+   PRE_MEM_WRITE("fgetattrlist(attrBuf)", ARG3, ARG4);
+}
+POST(fgetattrlist)
+{
+   if (ARG4 > sizeof(vki_uint32_t)) {
+      // attrBuf is uint32_t size followed by attr data
+      vki_uint32_t *sizep = (vki_uint32_t *)ARG3;
+      POST_MEM_WRITE(ARG3, sizeof(vki_uint32_t));
+      if (ARG5 & FSOPT_REPORT_FULLSIZE) {
+         // *sizep is bytes required for return value, including *sizep
+      } else {
+         // *sizep is actual bytes returned, including *sizep
+      }
+      scan_attrlist(tid, (struct vki_attrlist *)ARG2, sizep+1, MIN(*sizep, ARG4), &get1attr);
+   }
+}
+
 #endif /* DARWIN_VERS >= DARWIN_10_6 */
 
 
@@ -9359,6 +9843,17 @@ static void munge_wll(UWord* a1, ULong* a2, ULong* a3,
    *a1 = aRG1; *a2 = LOHI64(aRG2,aRG3); *a3 = LOHI64(aRG4,aRG5);
 #  else
    *a1 = aRG1; *a2 = aRG2; *a3 = aRG3;
+#  endif
+}
+
+static void munge_wlww(UWord* a1, ULong* a2, UWord* a3, UWord* a4,
+                       UWord aRG1, UWord aRG2, UWord aRG3,
+                       UWord aRG4, UWord aRG5)
+{
+#  if defined(VGA_x86)
+   *a1 = aRG1; *a2 = LOHI64(aRG2,aRG3); *a3 = aRG4; *a4 = aRG5;
+#  else
+   *a1 = aRG1; *a2 = aRG2; *a3 = aRG3; *a4 = aRG4;
 #  endif
 }
 
@@ -9422,6 +9917,7 @@ PRE(kernelrpc_mach_vm_allocate_trap)
    PRE_MEM_WRITE("kernelrpc_mach_vm_allocate_trap(address)",
                  a2, sizeof(void*));
 }
+
 POST(kernelrpc_mach_vm_allocate_trap)
 {
    UWord a1; UWord a2; ULong a3; UWord a4;
@@ -9441,6 +9937,20 @@ POST(kernelrpc_mach_vm_allocate_trap)
          VKI_PROT_READ|VKI_PROT_WRITE, VKI_MAP_ANON, -1, 0);
 #     endif
    }
+}
+
+// MACH 11
+// kern_return_t _kernelrpc_mach_vm_purgable_control_trap(mach_port_name_t target,
+//                                                        mach_vm_offset_t address,
+//                                                        vm_purgable_t control,
+//                                                        int *state);
+PRE(kernelrpc_mach_vm_purgable_control_trap)
+{
+    // FIXME PJF munge?
+    PRINT("kernelrpc_mach_vm_purgable_control_trap"
+          "(target:%#lx, address:%#lx, control:%ld, state:%#lx)",
+          ARG1, ARG2, SARG3, ARG4);
+    // FIXME PJF PRE_REG_READ and READ/WRITE MEM
 }
 
 PRE(kernelrpc_mach_vm_deallocate_trap)
@@ -9577,6 +10087,37 @@ POST(process_policy)
    // munge_???
 }
 
+PRE(csops_audittoken)
+{
+  PRINT("csops_audittoken(%ld, %#lx, %#lx, %lu, %#lx)", SARG1, ARG2, ARG3, ARG4, ARG5);
+  PRE_REG_READ5(int, "csops_audittoken",
+    vki_pid_t, pid, uint32_t, ops,
+    void *, useraddr, vki_size_t, usersize, void *, uaudittoken);
+
+  if (ARG5 == 0) {
+    SET_STATUS_Failure( VKI_EINVAL );
+    return;
+  }
+
+  PRE_MEM_WRITE( "csops_audittoken(useraddr)", ARG3, ARG4 );
+
+  // If the pid is ours, don't mark the program as KILL or HARD
+  // Maybe we should keep track of this for later calls to STATUS
+  if (!ARG1 || VG_(getpid)() == ARG1) {
+    switch (ARG2) {
+    case VKI_CS_OPS_MARKINVALID:
+    case VKI_CS_OPS_MARKHARD:
+    case VKI_CS_OPS_MARKKILL:
+        SET_STATUS_Success(0);
+    }
+  }
+}
+
+POST(csops_audittoken)
+{
+   POST_MEM_WRITE( ARG3, ARG4 );
+}
+
 #endif /* DARWIN_VERS >= DARWIN_10_8 */
 
 
@@ -9616,9 +10157,12 @@ PRE(kernelrpc_mach_port_construct_trap)
 {
    UWord a1; UWord a2; ULong a3; UWord a4;
    munge_wwlw(&a1, &a2, &a3, &a4, ARG1, ARG2, ARG3, ARG4, ARG5);
+   mach_port_options_t* options = (mach_port_options_t*) a2;
    PRINT("kernelrpc_mach_port_construct_trap"
-         "(target: %s, options: %#lx, content: %llx, name: %p)",
-         name_for_port(a1), a2, a3, *(mach_port_name_t**)a4);
+         "(target: %s, options: %#lx {flags: %#x, mpl_ql: %#x}, context: %llx, name: %p)",
+         name_for_port(a1), a2, options->flags, options->mpl.mpl_qlimit, a3, *(mach_port_name_t**)a4);
+   PRE_MEM_READ("kernelrpc_mach_port_construct_trap(options)", a2,
+                sizeof(mach_port_options_t));
    PRE_MEM_WRITE("kernelrpc_mach_port_construct_trap(name)", a4,
                  sizeof(mach_port_name_t*));
 }
@@ -9759,41 +10303,60 @@ POST(getattrlistbulk)
 
 PRE(faccessat)
 {
-    PRINT("faccessat(FIXME)(fd:%ld, path:%#lx(%s), amode:%#lx, flag:%#lx)",
-        ARG1, ARG2, (HChar*)ARG2, ARG3, ARG4);
+    Int fd = ARG1;
+    PRINT("faccessat(fd:%d, path:%#lx(%s), amode:%#lx, flag:%#lx)",
+          fd, ARG2, ARG2 ? (HChar*)ARG2 : "null", ARG3, ARG4);
     PRE_REG_READ4(int, "faccessat",
                   int, fd, user_addr_t, path, int, amode, int, flag);
+    ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "faccessat", tid, status);
+    PRE_MEM_RASCIIZ( "faccessat(path)", ARG2 );
 }
 
 PRE(fstatat64)
 {
-    PRINT("fstatat64(FIXME)(fd:%ld, path:%#lx(%s), ub:%#lx, flag:%#lx)",
-        ARG1, ARG2, (HChar*)ARG2, ARG3, ARG4);
+    Int fd = ARG1;
+    PRINT("fstatat64(fd:%d, path:%#lx(%s), ub:%#lx, flag:%#lx)",
+          fd, ARG2, ARG2 ? (HChar*)ARG2 : "null", ARG3, ARG4);
     PRE_REG_READ4(int, "fstatat64",
                   int, fd, user_addr_t, path, user_addr_t, ub, int, flag);
+    ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "fstatat64", tid, status);
+    PRE_MEM_RASCIIZ( "fstatat64(path)", ARG2 );
+    PRE_MEM_WRITE( "fstatat64(ub)", ARG3, sizeof(struct vki_stat64) );
+}
+POST(fstatat64)
+{
+    POST_MEM_WRITE( ARG3, sizeof(struct vki_stat64) );
+}
+
+PRE(unlinkat)
+{
+    PRINT("unlinkat ( %ld, %#lx(%s), %#lx )",
+          SARG1, ARG2, (HChar*)ARG2, ARG3);
+    PRE_REG_READ3(long, "unlinkat",
+                  int, fd, const char *, path, int, flag);
+    PRE_MEM_RASCIIZ( "unlinkat(path)", ARG2 );
 }
 
 PRE(readlinkat)
 {
-    Word  saved = SYSNO;
-    
     PRINT("readlinkat ( %ld, %#lx(%s), %#lx, %ld )",
           SARG1, ARG2, (HChar*)ARG2, ARG3, SARG4);
     PRE_REG_READ4(long, "readlinkat",
                   int, dfd, const char *, path, char *, buf, int, bufsiz);
+    ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "readlinkat", tid, status);
     PRE_MEM_RASCIIZ( "readlinkat(path)", ARG2 );
     PRE_MEM_WRITE( "readlinkat(buf)", ARG3,ARG4 );
     
     /*
-     * Refer to coregrind/m_syswrap/syswrap-linux.c
+     * Linux needs to jump through hoops to check for accesses to things liks
+     * /proc/PID/self
+     * Darwin does not have proc so no need here
      */
-    {
-        /* Normal case */
-        SET_STATUS_from_SysRes( VG_(do_syscall4)(saved, ARG1, ARG2, ARG3, ARG4));
-    }
-    
-    if (SUCCESS && RES > 0)
-        POST_MEM_WRITE( ARG3, RES );
+}
+
+POST(readlinkat)
+{
+   POST_MEM_WRITE( ARG3, RES );
 }
 
 PRE(bsdthread_ctl)
@@ -9805,11 +10368,44 @@ PRE(bsdthread_ctl)
                  void*, cmd, void*, arg1, void*, arg2, void*, arg3);
 }
 
+// syscalls.master says
+// int csrctl(uint32_t op, user_addr_t useraddr, user_addr_t usersize) NO_SYSCALL_STUB;
+// but https://github.com/search?q=repo%3Aapple-open-source%2Fmacos%20__csrctl&type=code says
+// int __csrctl(csr_op_t op, void *buffer, size_t size);
 PRE(csrctl)
 {
-   PRINT("csrctl(op:%ld, useraddr:%#lx, usersize:%#lx) FIXME", ARG1, ARG2, ARG3);
-   PRE_REG_READ3(int, "csrctl",
-                 uint32_t, op, user_addr_t, useraddr, user_addr_t, usersize);
+   switch (ARG1) {
+   case VKI_CSR_CHECK:
+     PRINT("csrctl(op:CSR_CHECK, useraddr:%#lx, usersize:%#lx)", ARG2, ARG3);
+     PRE_REG_READ3(int, "csrctl",
+                   uint32_t, op, void*, useraddr, size_t, usersize);
+     PRE_MEM_READ( "csrctl(useraddr)", ARG2, ARG3 );
+     break;
+
+   case VKI_CSR_GET_ACTIVE_CONFIG:
+      PRINT("csrctl(op:CSR_GET_ACTIVE_CONFIG, useraddr:%#lx, usersize:%#lx)", ARG2, ARG3);
+      PRE_REG_READ3(int, "csrctl",
+                    uint32_t, op, void*, useraddr, size_t, usersize);
+      PRE_MEM_WRITE( "csrctl(useraddr)", ARG2, ARG3 );
+      break;
+
+   default:
+      PRINT("csrctl(op:%ld [??], useraddr:%#lx, usersize:%#lx)", ARG1, ARG2, ARG3);
+      log_decaying("UNKNOWN csrctl %ld!", ARG1);
+      break;
+   }
+}
+POST(csrctl)
+{
+   vg_assert(SUCCESS);
+   switch (ARG1) {
+   case VKI_CSR_GET_ACTIVE_CONFIG:
+      POST_MEM_WRITE( ARG2, ARG3 );
+      break;
+
+   default:
+      break;
+   }
 }
 
 PRE(guarded_open_dprotected_np)
@@ -9838,6 +10434,55 @@ PRE(guarded_writev_np)
         ARG1, ARG2, ARG3, (ULong)ARG4);
 }
 
+PRE(openat)
+{
+   if (ARG3 & VKI_O_CREAT) {
+      // 4-arg version
+      PRINT("openat ( %ld, %#" FMT_REGWORD "x(%s), %ld, %ld )",
+            SARG1, ARG2, (HChar*)(Addr)ARG2, SARG3, SARG4);
+      PRE_REG_READ4(long, "openat",
+                    int, dfd, const char *, filename, int, flags, int, mode);
+   } else {
+     // 3-arg version
+     PRINT("openat ( %ld, %#" FMT_REGWORD "x(%s), %ld )",
+           SARG1, ARG2, (HChar*)(Addr)ARG2, SARG3);
+     PRE_REG_READ3(long, "openat",
+                   int, dfd, const char *, filename, int, flags);
+   }
+   PRE_MEM_RASCIIZ( "openat(filename)", ARG2 );
+
+   /* For absolute filenames, dfd is ignored.  If dfd is AT_FDCWD,
+      filename is relative to cwd.  When comparing dfd against AT_FDCWD,
+      be sure only to compare the bottom 32 bits. */
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "openat", tid, status);
+
+   /* Otherwise handle normally */
+   *flags |= SfMayBlock;
+}
+
+POST(openat)
+{
+   vg_assert(SUCCESS);
+   POST_newFd_RES;
+   if (!ML_(fd_allowed)(RES, "openat", tid, True)) {
+      VG_(close)(RES);
+      SET_STATUS_Failure( VKI_EMFILE );
+   } else {
+      if (VG_(clo_track_fds))
+         ML_(record_fd_open_with_given_name)(tid, RES, (HChar*)(Addr)ARG2);
+   }
+}
+
+PRE(mkdirat)
+{
+   PRINT("mkdirat ( %" FMT_REGWORD "u, %#" FMT_REGWORD "x(%s), %" FMT_REGWORD "u )", ARG1,ARG2,(char*)ARG2,ARG3);
+   PRE_REG_READ3(int, "mkdirat",
+                 int, fd, const char *, path, unsigned int, mode);
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "mkdirat", tid, status);
+   PRE_MEM_RASCIIZ( "mkdirat(path)", ARG2 );
+   *flags |= SfMayBlock;
+}
+
 #endif /* DARWIN_VERS >= DARWIN_10_10 */
 
 
@@ -9846,6 +10491,15 @@ PRE(guarded_writev_np)
    ------------------------------------------------------------------ */
 
 #if DARWIN_VERS >= DARWIN_10_11
+
+PRE(kdebug_trace_string)
+{
+  PRINT("kdebug_trace_string(%#lx (%s), %#lx, %s)", ARG1, kdebug_debugid(ARG1), ARG2, (HChar*)(Addr)ARG3);
+  if (ARG3 != 0) {
+    PRE_MEM_RASCIIZ("kdebug_trace_string(string)", ARG3);
+  }
+  SET_STATUS_Success(0);
+}
 
 PRE(kevent_qos)
 {
@@ -9916,9 +10570,149 @@ PRE(pselect)
 
 PRE(getentropy)
 {
-    PRINT("getentropy(buffer:%#lx, size:%ld) FIXME", ARG1, ARG2);
+    PRINT("getentropy(buffer:%#lx, size:%ld)", ARG1, ARG2);
     PRE_REG_READ2(int, "getentropy",
                   void*, buffer, size_t, size);
+    PRE_MEM_WRITE( "getentropy(buffer)", ARG1, ARG2 );
+}
+
+POST(getentropy)
+{
+    vg_assert(SUCCESS);
+    POST_MEM_WRITE( ARG1, ARG2 );
+}
+
+PRE(necp_open)
+{
+   PRINT("necp_open(%#lx)", ARG1);
+   PRE_REG_READ1(int, "necp_open", int, flags);
+}
+
+PRE(necp_client_action)
+{
+   PRINT("necp_client_action(%lu, %#lx, %#lx, %lu, %#lx, %lu)",
+     ARG1, ARG2, ARG3, ARG4, ARG5, ARG6);
+   PRE_REG_READ6(int, "necp_client_action",
+     int, necp_fd, uint32_t, action,
+     unsigned char*, client_id, size_t, client_id_len,
+     uint8_t*, buffer, size_t, buffer_size);
+
+   switch (ARG2 /* request */) {
+   case VKI_NECP_CLIENT_ACTION_ADD:
+      if (ARG4 != sizeof(uuid_t) || ARG6 == 0 || ARG6 > VKI_NECP_MAX_CLIENT_PARAMETERS_SIZE) {
+          SET_STATUS_Failure( VKI_EINVAL );
+      }
+      PRE_MEM_WRITE( "necp_client_action(ADD, client_id)", ARG3, ARG4);
+      PRE_MEM_READ( "necp_client_action(ADD, buffer)", ARG5, ARG6);
+      break;
+   case VKI_NECP_CLIENT_ACTION_CLAIM:
+      if (ARG4 != sizeof(uuid_t)) {
+          SET_STATUS_Failure( VKI_EINVAL );
+      }
+      PRE_MEM_READ( "necp_client_action(CLAIM, client_id)", ARG3, ARG4);
+      break;
+   case VKI_NECP_CLIENT_ACTION_REMOVE:
+      if (ARG4 != sizeof(uuid_t) || (ARG5 != 0 && ARG6 != VKI_IFNET_STATS_PER_FLOW_SIZE)) {
+          SET_STATUS_Failure( VKI_EINVAL );
+      }
+      PRE_MEM_READ( "necp_client_action(REMOVE, client_id)", ARG3, ARG4);
+      PRE_MEM_READ( "necp_client_action(REMOVE, buffer)", ARG5, ARG6);
+      break;
+   case VKI_NECP_CLIENT_ACTION_COPY_PARAMETERS:
+      if ((ARG3 != 0 && ARG4 != sizeof(uuid_t)) || ARG6 == 0) {
+          SET_STATUS_Failure( VKI_EINVAL );
+      }
+      if (ARG3 != 0) {
+        PRE_MEM_READ( "necp_client_action(COPY_PARAMETERS, client_id)", ARG3, ARG4);
+      }
+      PRE_MEM_READ( "necp_client_action(COPY_PARAMETERS, buffer)", ARG5, ARG6);
+      break;
+   case VKI_NECP_CLIENT_ACTION_COPY_RESULT:
+      if ((ARG3 != 0 && ARG4 != sizeof(uuid_t)) || ARG6 == 0) {
+          SET_STATUS_Failure( VKI_EINVAL );
+      }
+      if (ARG3 != 0) {
+        PRE_MEM_READ( "necp_client_action(COPY_RESULT, client_id)", ARG3, ARG4);
+      }
+      PRE_MEM_READ( "necp_client_action(COPY_RESULT, buffer)", ARG5, ARG6);
+      break;
+   case VKI_NECP_CLIENT_ACTION_COPY_UPDATED_RESULT:
+      if ((ARG3 != 0 && ARG4 != sizeof(uuid_t)) || ARG6 == 0) {
+          SET_STATUS_Failure( VKI_EINVAL );
+      }
+      if (ARG3 != 0) {
+        PRE_MEM_READ( "necp_client_action(COPY_UPDATED_RESULT, client_id)", ARG3, ARG4);
+      }
+      PRE_MEM_READ( "necp_client_action(COPY_UPDATED_RESULT, buffer)", ARG5, ARG6);
+      break;
+   case VKI_NECP_CLIENT_ACTION_COPY_LIST:
+      if (ARG6 < sizeof(u_int32_t)) {
+          SET_STATUS_Failure( VKI_EINVAL );
+      }
+      PRE_MEM_READ( "necp_client_action(COPY_LIST, buffer)", ARG5, ARG6);
+      break;
+   case VKI_NECP_CLIENT_ACTION_AGENT:
+      if (ARG4 != sizeof(uuid_t) || ARG6 == 0) {
+          SET_STATUS_Failure( VKI_EINVAL );
+      }
+      PRE_MEM_READ( "necp_client_action(AGENT, client_id)", ARG3, ARG4);
+      PRE_MEM_READ( "necp_client_action(AGENT, buffer)", ARG5, ARG6);
+      break;
+   case VKI_NECP_CLIENT_ACTION_COPY_AGENT:
+      if (ARG4 != sizeof(uuid_t) || ARG6 == 0) {
+          SET_STATUS_Failure( VKI_EINVAL );
+      }
+      PRE_MEM_READ( "necp_client_action(COPY_AGENT, client_id)", ARG3, ARG4);
+      PRE_MEM_READ( "necp_client_action(COPY_AGENT, buffer)", ARG5, ARG6);
+      PRE_MEM_WRITE( "necp_client_action(COPY_AGENT, buffer)", ARG5, ARG6);
+      break;
+   case VKI_NECP_CLIENT_ACTION_AGENT_USE:
+      if (ARG4 != sizeof(uuid_t) || ARG6 != sizeof(struct vki_necp_agent_use_parameters)) {
+          SET_STATUS_Failure( VKI_EINVAL );
+      }
+      PRE_MEM_READ( "necp_client_action(AGENT_USE, client_id)", ARG3, ARG4);
+      PRE_MEM_READ( "necp_client_action(AGENT_USE, buffer)", ARG5, ARG6);
+      PRE_MEM_WRITE( "necp_client_action(AGENT_USE, buffer)", ARG5, ARG6);
+      break;
+   case VKI_NECP_CLIENT_ACTION_COPY_INTERFACE:
+      if (ARG4 != sizeof(u_int32_t) || ARG6 < sizeof(struct vki_necp_interface_details_legacy)) {
+          SET_STATUS_Failure( VKI_EINVAL );
+      }
+      PRE_MEM_READ( "necp_client_action(COPY_INTERFACE, client_id)", ARG3, ARG4);
+      PRE_MEM_WRITE( "necp_client_action(COPY_INTERFACE, buffer)", ARG5, ARG6);
+      break;
+   case VKI_NECP_CLIENT_ACTION_COPY_ROUTE_STATISTICS:
+      if (ARG4 != sizeof(uuid_t) || ARG6 < VKI_NECP_STAT_COUNTS_SIZE) {
+          SET_STATUS_Failure( VKI_EINVAL );
+      }
+      PRE_MEM_READ( "necp_client_action(COPY_ROUTE_STATISTICS, client_id)", ARG3, ARG4);
+      PRE_MEM_WRITE( "necp_client_action(COPY_ROUTE_STATISTICS, buffer)", ARG5, ARG6);
+      break;
+   case VKI_NECP_CLIENT_ACTION_UPDATE_CACHE:
+      if (ARG4 != sizeof(uuid_t) || ARG6 != sizeof(struct vki_necp_cache_buffer)) {
+          SET_STATUS_Failure( VKI_EINVAL );
+      }
+      PRE_MEM_READ( "necp_client_action(UPDATE_CACHE, client_id)", ARG3, ARG4);
+      PRE_MEM_READ( "necp_client_action(UPDATE_CACHE, buffer)", ARG5, ARG6);
+      break;
+   case VKI_NECP_CLIENT_ACTION_COPY_CLIENT_UPDATE:
+      if (ARG4 != sizeof(uuid_t) || ARG6 == 0) {
+          SET_STATUS_Failure( VKI_EINVAL );
+      }
+      PRE_MEM_WRITE( "necp_client_action(COPY_CLIENT_UPDATE, client_id)", ARG3, ARG4);
+      PRE_MEM_WRITE( "necp_client_action(COPY_CLIENT_UPDATE, buffer)", ARG5, ARG6);
+      break;
+   case VKI_NECP_CLIENT_ACTION_SIGN:
+      if (ARG4 < sizeof(struct vki_necp_client_signable) || ARG6 != VKI_NECP_CLIENT_ACTION_SIGN_TAG_LENGTH) {
+          SET_STATUS_Failure( VKI_EINVAL );
+      }
+      PRE_MEM_READ( "necp_client_action(SIGN, client_id)", ARG3, ARG4);
+      PRE_MEM_WRITE( "necp_client_action(SIGN, buffer)", ARG5, ARG6);
+      break;
+   default:
+      VG_(printf)("UNKNOWN necp_client_action action %#lx\n", ARG2);
+      break;
+   }
 }
 
 static const HChar *ulop_name(int op)
@@ -9932,10 +10726,29 @@ static const HChar *ulop_name(int op)
 
 PRE(ulock_wake)
 {
-    PRINT("ulock_wake(operation:%ld, addr:%#lx, wake_value:%ld) FIXME",
-        ARG1, ARG2, ARG3);
+	 uint ul_opcode = ARG1 & VKI_UL_OPCODE_MASK;
+	 uint ul_flags = ARG1 & VKI_UL_FLAGS_MASK;
+   switch (ul_opcode) {
+   case VKI_UL_UNFAIR_LOCK:
+   case VKI_UL_COMPARE_AND_WAIT: {
+     const char* name = ulop_name(ul_opcode);
+     if (ul_flags & VKI_ULF_WAKE_THREAD) {
+       PRINT("ulock_wake(operation:%s (flags: %#x), addr:%#lx, wake_value:%s)",
+             name, ul_flags, ARG2, name_for_port(ARG3));
+     } else {
+       PRINT("ulock_wake(operation:%s (flags: %#x), addr:%#lx, wake_value:%ld /*unused*/)",
+             name, ul_flags, ARG2, ARG3);
+     }
     PRE_REG_READ3(int, "ulock_wake",
                   uint32_t, operation, void*, addr, uint64_t, wake_value);
+     break;
+}
+
+   default:
+      PRINT("ulock_wake(operation:%ld (opcode: %u [??], flags: %#x), addr:%#lx, wake_value:%ld)", ARG1, ul_opcode, ul_flags, ARG2, ARG3);
+      log_decaying("UNKNOWN ulock_wake %ld (opcode: %u [??], flags: %#x)!", ARG1, ul_opcode, ul_flags);
+      break;
+   }
 }
 
 PRE(ulock_wait)
@@ -9960,29 +10773,75 @@ PRE(ulock_wait)
       log_decaying("UNKNOWN ulock_wait %ld (opcode: %u [??], flags: %#x)!", ARG1, ul_opcode, ul_flags);
       break;
     }
+
+    *flags |= SfMayBlock;
+}
+
+PRE(terminate_with_payload)
+{
+    PRINT("terminate_with_payload"
+          "(pid: %ld, reason_namespace:%ld, reason_code:%ld, payload:%#lx, payload_size:%ld, reason_string:%s, reason_flags:%#x)",
+          ARG1, ARG2, ARG3, ARG4, ARG5, (char*)ARG6, (uint)ARG7);
+    PRE_REG_READ7(int, "terminate_with_payload", int, pid,
+                  uint32_t, reason_namespace, uint64_t, reason_code, void*, payload,
+                  uint32_t, payload_size, const char*, reason_string, uint64_t, reason_flags);
+    PRE_MEM_READ("abort_with_payload(payload)", ARG4, ARG5);
+    PRE_MEM_RASCIIZ("abort_with_payload(reason_string)", ARG6);
+}
+
+PRE(abort_with_payload)
+{
+    PRINT("abort_with_payload"
+          "(reason_namespace:%ld, reason_code:%ld, payload:%#lx, payload_size:%ld, reason_string:%s, reason_flags:%#x)",
+          ARG1, ARG2, ARG3, ARG4, (char*)ARG5, (uint)ARG6);
+    PRE_REG_READ6(uint32_t, "abort_with_payload",
+                  uint32_t, reason_namespace, uint64_t, reason_code, void*, payload,
+                  uint32_t, payload_size, const char*, reason_string, uint64_t, reason_flags);
+    PRE_MEM_READ("abort_with_payload(payload)", ARG3, ARG4);
+    PRE_MEM_RASCIIZ("abort_with_payload(reason_string)", ARG5);
 }
 
 PRE(host_create_mach_voucher_trap)
 {
     // munge_wwww -- no need to call helper
     PRINT("host_create_mach_voucher_trap"
-        "(host:%#lx, recipes:%#lx, recipes_size:%ld, voucher:%#lx) FIXME",
-        ARG1, ARG2, ARG3, ARG4);
+        "(host:%s, recipes:%#lx, recipes_size:%ld, voucher:%#lx)",
+        name_for_port(ARG1), ARG2, ARG3, ARG4);
+    // FIXME PJF PRE_REG_READ?
+    PRE_MEM_READ( "host_create_mach_voucher_trap(recipes)", ARG2, ARG3 );
+    PRE_MEM_WRITE( "host_create_mach_voucher_trap(voucher)", ARG4, sizeof(mach_port_name_t) );
+}
+
+POST(host_create_mach_voucher_trap)
+{
+  vg_assert(SUCCESS);
+  POST_MEM_WRITE( ARG4, sizeof(mach_port_name_t) );
+}
+
+// MACH 72
+// kern_return_t mach_voucher_extract_attr_recipe(ipc_voucher_t                           voucher,
+//                                                mach_voucher_attr_key_t                 key,
+//                                                mach_voucher_attr_raw_recipe_t          raw_recipe,
+//                                                mach_voucher_attr_raw_recipe_size_t     *in_out_size)
+PRE(mach_voucher_extract_attr_recipe_trap)
+{
+    PRINT("mach_voucher_extract_attr_recipe(voucher:%#lx, key:%lu, raw_recipe:%#lx, in_out_size:%#lx)", ARG1, ARG2, ARG3, ARG4);
+    // FIXME PJF add MEM READ/WRITE and POST as needed
 }
 
 PRE(task_register_dyld_image_infos)
 {
-#pragma pack(4)
-    typedef struct {
-       mach_msg_header_t Head;
-       /* start of the kernel processed data */
-       mach_msg_body_t msgh_body;
-       mach_msg_ool_descriptor_t dyld_images;
-       /* end of the kernel processed data */
-       NDR_record_t NDR;
-       mach_msg_type_number_t dyld_imagesCnt;
-    } Request;
-#pragma pack()
+//#pragma pack(4)
+//    typedef struct {
+//       mach_msg_header_t Head;
+//       /* start of the kernel processed data */
+//       mach_msg_body_t msgh_body;
+//       mach_msg_ool_descriptor_t dyld_images;
+//       /* end of the kernel processed data */
+//       NDR_record_t NDR;
+//       mach_msg_type_number_t dyld_imagesCnt;
+//    } Request;
+//#pragma pack()
     
     // Request *req = (Request *)ARG1;
     
@@ -10010,15 +10869,15 @@ POST(task_register_dyld_image_infos)
 
 PRE(task_register_dyld_shared_cache_image_info)
 {
-#pragma pack(4)
-    typedef struct {
-       mach_msg_header_t Head;
-       NDR_record_t NDR;
-       dyld_kernel_image_info_t dyld_cache_image;
-       boolean_t no_cache;
-       boolean_t private_cache;
-    } Request;
-#pragma pack()
+//#pragma pack(4)
+//    typedef struct {
+//       mach_msg_header_t Head;
+//       NDR_record_t NDR;
+//       dyld_kernel_image_info_t dyld_cache_image;
+//       boolean_t no_cache;
+//       boolean_t private_cache;
+//    } Request;
+//#pragma pack()
     
     // Request *req = (Request *)ARG1;
     
@@ -10073,6 +10932,299 @@ POST(mach_generate_activity_id)
 
 #endif /* DARWIN_VERS >= DARWIN_10_12 */
 
+/* ---------------------------------------------------------------------
+ Added for macOS 10.13 (High Sierra)
+ ------------------------------------------------------------------ */
+
+#if DARWIN_VERS >= DARWIN_10_13
+
+PRE(openat_nocancel)
+{
+   if (ARG3 & VKI_O_CREAT) {
+      // 4-arg version
+      PRINT("openat_nocancel ( %ld, %#" FMT_REGWORD "x(%s), %ld, %ld )",
+            SARG1, ARG2, (HChar*)(Addr)ARG2, SARG3, SARG4);
+      PRE_REG_READ4(long, "openat_nocancel",
+                    int, dfd, const char *, filename, int, flags, int, mode);
+   } else {
+     // 3-arg version
+     PRINT("openat_nocancel ( %ld, %#" FMT_REGWORD "x(%s), %ld )",
+           SARG1, ARG2, (HChar*)(Addr)ARG2, SARG3);
+     PRE_REG_READ3(long, "openat_nocancel",
+                   int, dfd, const char *, filename, int, flags);
+   }
+   PRE_MEM_RASCIIZ( "openat_nocancel(filename)", ARG2 );
+
+   /* For absolute filenames, dfd is ignored.  If dfd is AT_FDCWD,
+      filename is relative to cwd.  When comparing dfd against AT_FDCWD,
+      be sure only to compare the bottom 32 bits. */
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "openat_nocancel", tid, status);
+
+   /* Otherwise handle normally */
+   *flags |= SfMayBlock;
+}
+
+POST(openat_nocancel)
+{
+   vg_assert(SUCCESS);
+   POST_newFd_RES;
+   if (!ML_(fd_allowed)(RES, "openat_nocancel", tid, True)) {
+      VG_(close)(RES);
+      SET_STATUS_Failure( VKI_EMFILE );
+   } else {
+      if (VG_(clo_track_fds))
+         ML_(record_fd_open_with_given_name)(tid, RES, (HChar*)(Addr)ARG2);
+   }
+}
+
+PRE(kevent_id)
+{
+  PRINT("kevent_id(id:%ld, changelist:%#lx, nchanges:%ld, eventlist:%#lx, nevents:%ld, data_out:%#lx, data_available:%ld, flags:%lx)",
+        ARG1, ARG2, ARG3, ARG4, ARG5, ARG6, ARG7, ARG8);
+  PRE_REG_READ8(int,"kevent_id",
+                uint64_t,id,
+                const struct vki_kevent_qos_s *,changelist,
+                int,nchanges,
+                struct vki_kevent_qos_s *,eventlist,
+                int,nevents,
+                void*,data_out,
+                size_t*,data_available,
+                unsigned int,flags);
+
+  if (ARG3) PRE_MEM_READ ("kevent_id(changelist)",
+                          ARG2, ARG3 * sizeof(struct vki_kevent_qos_s));
+  if (ARG5) PRE_MEM_WRITE("kevent_id(eventlist)",
+                          ARG4, ARG5 * sizeof(struct vki_kevent_qos_s));
+  if (ARG7) PRE_MEM_WRITE ("kevent_id(data_out)",
+                          ARG6, ARG7 * sizeof(void*));
+
+  *flags |= SfMayBlock;
+}
+
+POST(kevent_id)
+{
+   PRINT("kevent_id ret %ld dst %#lx (%zu)", RES, ARG4, sizeof(struct vki_kevent_qos_s));
+   if (RES > 0) {
+      POST_MEM_WRITE(ARG4, RES * sizeof(struct vki_kevent_qos_s));
+   }
+}
+
+PRE(thread_get_special_reply_port)
+{
+   PRINT("thread_get_special_reply_port()");
+}
+
+POST(thread_get_special_reply_port)
+{
+   record_named_port(tid, RES, MACH_PORT_RIGHT_RECEIVE, "special-reply-%p");
+   PRINT("special reply port %s", name_for_port(RES));
+}
+#endif /* DARWIN_VERS >= DARWIN_10_13 */
+
+
+/* ---------------------------------------------------------------------
+ Added for macOS 10.14 (Mojave)
+ ------------------------------------------------------------------ */
+
+#if DARWIN_VERS >= DARWIN_10_14
+PRE(kernelrpc_mach_port_get_attributes_trap)
+{
+  PRINT("kernelrpc_mach_port_get_attributes_trap( %s, %s, %ld, %#lx, %#lx )",
+        name_for_port(ARG1), name_for_port(ARG2), SARG3, ARG4, ARG5);
+  PRE_REG_READ5(kern_return_t, "kernelrpc_mach_port_get_attributes_trap",
+                mach_port_name_t, target, mach_port_name_t, name, mach_port_flavor_t, flavor,
+	              mach_port_info_t, port_info_out, mach_msg_type_number_t*, port_info_outCnt);
+  PRE_MEM_READ( "kernelrpc_mach_port_get_attributes_trap(port_info_outCnt)", ARG5, sizeof(mach_msg_type_number_t));
+  PRE_MEM_WRITE( "kernelrpc_mach_port_get_attributes_trap(port_info_outCnt)", ARG5, sizeof(mach_msg_type_number_t));
+  mach_msg_type_number_t count = *(mach_msg_type_number_t*)ARG5;
+  if (count > 0) {
+    PRE_MEM_WRITE( "kernelrpc_mach_port_get_attributes_trap(port_info_out)", ARG4, count * sizeof(integer_t));
+  }
+}
+#endif /* DARWIN_VERS >= DARWIN_10_14 */
+
+
+/* ---------------------------------------------------------------------
+ Added for macOS 10.15 (Catalina)
+ ------------------------------------------------------------------ */
+
+#if DARWIN_VERS >= DARWIN_10_15
+
+PRE(task_restartable_ranges_register)
+{
+   PRINT("task_restartable_ranges_register(%s, %#lx, %ld)", name_for_port(ARG1), ARG2, SARG3);
+}
+
+POST(task_restartable_ranges_register)
+{
+#pragma pack(4)
+   typedef struct {
+      mach_msg_header_t Head;
+      NDR_record_t NDR;
+      kern_return_t RetCode;
+   } Reply;
+#pragma pack()
+
+   Reply *reply = (Reply *)ARG1;
+
+   if (!reply->RetCode) {
+   } else {
+      PRINT("mig return %d", reply->RetCode);
+   }
+}
+
+PRE(kernelrpc_mach_port_request_notification_trap)
+{
+  PRINT("kernelrpc_mach_port_request_notification_trap(%s, %s, %ld, %ld, %s, %ld, %#lx)",
+         name_for_port(ARG1), name_for_port(ARG2), SARG3, SARG4, name_for_port(ARG5), SARG6, ARG7);
+  PRE_REG_READ7(kern_return_t, "kernelrpc_mach_port_request_notification_trap",
+    ipc_space_t, task, mach_port_name_t, name, mach_msg_id_t, msgid,
+	  mach_port_mscount_t, sync, mach_port_name_t, notify, mach_msg_type_name_t, notifyPoly,
+	  mach_port_name_t*, previous);
+  if (ARG7 != 0) {
+    PRE_MEM_WRITE("kernelrpc_mach_port_request_notification_trap(previous)", ARG7, sizeof(mach_port_name_t));
+  }
+}
+
+POST(kernelrpc_mach_port_request_notification_trap)
+{
+  if (RES == 0 && ARG7 != 0) {
+    POST_MEM_WRITE(ARG7, sizeof(mach_port_name_t));
+    PRINT("-> previous:%s", name_for_port(*(mach_port_name_t*)ARG7));
+  }
+}
+
+PRE(kernelrpc_mach_port_type_trap)
+{
+  PRINT("kernelrpc_mach_port_type_trap(%s, %s, %#lx)",
+         name_for_port(ARG1), name_for_port(ARG2), ARG3);
+  PRE_REG_READ3(kern_return_t, "kernelrpc_mach_port_type_trap",
+    ipc_space_t, task, mach_port_name_t, name, mach_port_type_t*, ptype);
+  if (ARG3 != 0) {
+    PRE_MEM_WRITE("kernelrpc_mach_port_type_trap(ptype)", ARG3, sizeof(mach_port_type_t));
+  }
+}
+
+POST(kernelrpc_mach_port_type_trap)
+{
+  if (RES == 0 && ARG3 != 0) {
+    POST_MEM_WRITE(ARG3, sizeof(mach_port_type_t));
+    PRINT("-> ptype:%#x", *(mach_port_type_t*)ARG3);
+  }
+}
+
+#endif /* DARWIN_VERS >= DARWIN_10_15 */
+
+
+/* ---------------------------------------------------------------------
+ Added for macOS 11.0 (Big Sur)
+ ------------------------------------------------------------------ */
+
+#if DARWIN_VERS >= DARWIN_11_00
+
+#define DYLD_VM_END_MWL (-1ull)
+
+PRE(shared_region_check_np)
+{
+  // Special value used by dyld to forbid further uses of map_with_linking_np on macOS 13+
+  Bool special_call = DARWIN_VERS >= DARWIN_13_00 && ARG1 == DYLD_VM_END_MWL;
+
+  if (special_call) {
+    PRINT("shared_region_check_np(disable_map_with_linking)");
+  } else {
+  PRINT("shared_region_check_np(%#lx)", ARG1);
+  }
+  PRE_REG_READ1(kern_return_t, "shared_region_check_np", uint64_t*, start_address);
+
+  if (!special_call) {
+  PRE_MEM_WRITE("shared_region_check_np(start_address)", ARG1, sizeof(uint64_t));
+}
+}
+
+POST(shared_region_check_np)
+{
+  Bool special_call = DARWIN_VERS >= DARWIN_13_00 && ARG1 == DYLD_VM_END_MWL;
+
+  if (special_call) {
+    return;
+  }
+
+  if (RES == 0) {
+    POST_MEM_WRITE(ARG1, sizeof(uint64_t));
+    PRINT("shared dyld cache %#llx", *((uint64_t*) ARG1));
+  }
+}
+
+PRE(shared_region_map_and_slide_np)
+{
+  PRINT("shared_region_map_and_slide_np(%ld, %lu, %#lx, %lu, %#lx, %lu)", SARG1, ARG2, ARG3, ARG4, ARG5, ARG6);
+  PRE_REG_READ6(kern_return_t, "shared_region_map_and_slide_np",
+    int, fd, uint32_t, count, const struct shared_file_mapping_np*, mappings,
+    uint32_t, slide, uint64_t*, slide_start, uint32_t, slide_size);
+}
+
+PRE(task_read_for_pid)
+{
+  PRINT("task_read_for_pid(%s, %ld, %#lx)", name_for_port(ARG1), SARG2, ARG3);
+  PRE_REG_READ3(kern_return_t, "task_read_for_pid", mach_port_name_t, target_tport, int, pid, mach_port_name_t*, t);
+
+  if (ARG3 != 0) {
+    PRE_MEM_WRITE("task_read_for_pid(t)", ARG3, sizeof(mach_port_name_t));
+  }
+}
+
+POST(task_read_for_pid)
+{
+  if (RES == 0 && ARG3 != 0) {
+    POST_MEM_WRITE(ARG3, sizeof(mach_port_name_t));
+    PRINT("-> t:%s", name_for_port(*(mach_port_name_t*)ARG3));
+  }
+}
+
+PRE(ulock_wait2)
+{
+  PRINT("ulock_wait2(%ld, %#lx, %ld, %#lx, %ld)",
+        SARG1, ARG2, SARG3, ARG4, SARG5);
+  PRE_REG_READ5(int, "ulock_wait2",
+                uint32_t, operation, void*, addr, uint64_t, value,
+                uint32_t, timeout, uint64_t, value2);
+  Int value_size = 4;
+  if (ARG1 == VKI_UL_COMPARE_AND_WAIT64
+      || ARG1 == VKI_UL_COMPARE_AND_WAIT64_SHARED
+      || ARG1 == VKI_UL_COMPARE_AND_WAIT_SHARED) {
+    value_size = 8;
+  }
+  if (ARG2 != 0) {
+    PRE_MEM_READ("ulock_wait2(addr)", ARG2, value_size);
+    *flags |= SfMayBlock;
+  } else {
+    SET_STATUS_Failure( VKI_EINVAL );
+  }
+}
+
+#if defined(VGA_arm64)
+PRE(sys_crossarch_trap)
+{
+  PRINT("sys_crossarch_trap(%lu)", ARG1);
+  PRE_REG_READ1(kern_return_t, "sys_crossarch_trap", uint32_t, name);
+}
+
+PRE(objc_bp_assist_cfg_np)
+{
+  PRINT("objc_bp_assist_cfg_np(%#lx, %#lx)", ARG1, ARG2);
+}
+#endif
+
+#endif /* DARWIN_VERS >= DARWIN_11_00 */
+
+
+/* ---------------------------------------------------------------------
+ Added for macOS 12.0 (Monterey)
+ ------------------------------------------------------------------ */
+
+#if DARWIN_VERS >= DARWIN_12_00
+
+#endif /* DARWIN_VERS >= DARWIN_12_00 */
 
 /* ---------------------------------------------------------------------
    syscall tables
@@ -10104,7 +11256,7 @@ const SyscallTableEntry ML_(syscall_table)[] = {
    GENXY(__NR_read,        sys_read), 
    GENX_(__NR_write,       sys_write), 
    GENXY(__NR_open,        sys_open), 
-   GENXY(__NR_close,       sys_close), 
+   GENX_(__NR_close,       sys_close),
    GENXY(__NR_wait4,       sys_wait4), 
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(8)),     // old creat
    GENX_(__NR_link,        sys_link), 
@@ -10183,8 +11335,8 @@ const SyscallTableEntry ML_(syscall_table)[] = {
    GENXY(__NR_mincore,     sys_mincore), 
    GENXY(__NR_getgroups,   sys_getgroups), 
 // _____(__NR_setgroups),   // 80
-   GENX_(__NR_getpgrp,     sys_getpgrp), 
-   GENX_(__NR_setpgid,     sys_setpgid), 
+   GENX_(__NR_getpgrp,     sys_getpgrp),
+   GENX_(__NR_setpgid,     sys_setpgid),
    GENXY(__NR_setitimer,   sys_setitimer), 
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(84)),    // old wait
 // _____(__NR_swapon), 
@@ -10253,7 +11405,7 @@ const SyscallTableEntry ML_(syscall_table)[] = {
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(148)),   // old setquota
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(149)),   // old qquota
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(150)),   // old getsockname 
-// _____(__NR_getpgid), 
+   GENX_(__NR_getpgid,     sys_getpgid),
 // _____(__NR_setprivexec), 
    GENXY(__NR_pread,       sys_pread64), 
    GENX_(__NR_pwrite,      sys_pwrite64), 
@@ -10272,7 +11424,11 @@ const SyscallTableEntry ML_(syscall_table)[] = {
    MACX_(__NR_mount,       mount), 
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(168)),   // old ustat
    MACXY(__NR_csops,       csops),                 // code-signing ops
+#if DARWIN_VERS >= DARWIN_10_8
+   MACXY(__NR_csops_audittoken, csops_audittoken), // 170
+#else
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(170)),   // old table
+#endif
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(171)),   // old wait3
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(172)),   // old rpause
 // _____(__NR_waitid), 
@@ -10280,7 +11436,11 @@ const SyscallTableEntry ML_(syscall_table)[] = {
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(175)),   // old gc_control
 // _____(__NR_add_profil), 
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(177)),   // ???
+#if DARWIN_VERS >= DARWIN_10_11
+   MACX_(__NR_kdebug_trace_string, kdebug_trace_string), // 178
+#else
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(178)),   // ???
+#endif
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(179)),   // ???
    MACX_(__NR_kdebug_trace, kdebug_trace),     // 180
    GENX_(__NR_setgid,      sys_setgid), 
@@ -10340,8 +11500,8 @@ const SyscallTableEntry ML_(syscall_table)[] = {
    GENX_(__NR_delete,      sys_unlink), 
 // _____(__NR_copyfile), 
 #if DARWIN_VERS >= DARWIN_10_6
-// _____(__NR_fgetattrlist), 
-// _____(__NR_fsetattrlist), 
+   MACX_(__NR_fgetattrlist, fgetattrlist), // 228
+// _____(__NR_fsetattrlist),
 #else
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(228)),   // ?? 
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(229)),   // ?? 
@@ -10410,15 +11570,17 @@ const SyscallTableEntry ML_(syscall_table)[] = {
 #if DARWIN_VERS >= DARWIN_10_8
    MACX_(__NR_gettid, gettid),  // 286
 #endif
-// _____(__NR_setsgroups), 
-// _____(__NR_getsgroups), 
-// _____(__NR_setwgroups), 
-// _____(__NR_getwgroups), 
-// _____(__NR_mkfifo_extended), 
-// _____(__NR_mkdir_extended), 
-// _____(__NR_identitysvc), 
-// _____(__NR_shared_region_check_np), 
-// _____(__NR_shared_region_map_np), 
+// _____(__NR_setsgroups),
+// _____(__NR_getsgroups),
+// _____(__NR_setwgroups),
+// _____(__NR_getwgroups),
+// _____(__NR_mkfifo_extended),
+// _____(__NR_mkdir_extended),
+// _____(__NR_identitysvc),
+#if DARWIN_VERS >= DARWIN_11_00
+   MACXY(__NR_shared_region_check_np, shared_region_check_np), // 294
+#endif
+// _____(__NR_shared_region_map_np),
 #if DARWIN_VERS >= DARWIN_10_6
 // _____(__NR_vm_pressure_monitor), 
 // _____(__NR_psynch_rw_longrdlock), 
@@ -10457,13 +11619,13 @@ const SyscallTableEntry ML_(syscall_table)[] = {
 #else
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(308)),   // old __pthread_cond_timedwait
 #endif
-// _____(__NR_aio_fsync), 
-   MACXY(__NR_aio_return,     aio_return), 
-   MACX_(__NR_aio_suspend,    aio_suspend), 
-// _____(__NR_aio_cancel), 
-   MACX_(__NR_aio_error,      aio_error), 
-   MACXY(__NR_aio_read,       aio_read), 
-   MACX_(__NR_aio_write,      aio_write), 
+// _____(__NR_aio_fsync),
+   MACX_(__NR_aio_return,     aio_return),
+   MACX_(__NR_aio_suspend,    aio_suspend),
+// _____(__NR_aio_cancel),
+   MACX_(__NR_aio_error,      aio_error),
+   MACXY(__NR_aio_read,       aio_read),
+   MACX_(__NR_aio_write,      aio_write),
 // _____(__NR_lio_listio),   // 320
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(321)),   // ???
 
@@ -10479,10 +11641,10 @@ const SyscallTableEntry ML_(syscall_table)[] = {
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(326)),   // ???
    MACX_(__NR_issetugid,               issetugid), 
    MACX_(__NR___pthread_kill,          __pthread_kill),
-   MACX_(__NR___pthread_sigmask,       __pthread_sigmask), 
-// _____(__NR___sigwait), 
-   MACX_(__NR___disable_threadsignal,  __disable_threadsignal), 
-   MACX_(__NR___pthread_markcancel,    __pthread_markcancel), 
+   MACX_(__NR___pthread_sigmask,       __pthread_sigmask),
+   MACXY(__NR___sigwait,               __sigwait),  // 330
+   MACX_(__NR___disable_threadsignal,  __disable_threadsignal),
+   MACX_(__NR___pthread_markcancel,    __pthread_markcancel),
    MACX_(__NR___pthread_canceled,      __pthread_canceled),
    MACX_(__NR___semwait_signal,        __semwait_signal), 
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(335)),   // old utrace
@@ -10535,7 +11697,9 @@ const SyscallTableEntry ML_(syscall_table)[] = {
 #if DARWIN_VERS < DARWIN_10_11
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(374)),   // ???
 #endif
+#if DARWIN_VERS < DARWIN_10_13
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(375)),   // ???
+#endif
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(376)),   // ???
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(377)),   // ???
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(378)),   // ???
@@ -10560,7 +11724,7 @@ const SyscallTableEntry ML_(syscall_table)[] = {
    GENXY(__NR_read_nocancel,     sys_read),
    GENX_(__NR_write_nocancel,    sys_write),
    GENXY(__NR_open_nocancel,     sys_open),
-   GENXY(__NR_close_nocancel,    sys_close),
+   GENX_(__NR_close_nocancel,    sys_close),
    GENXY(__NR_wait4_nocancel,    sys_wait4),   // 400
    MACXY(__NR_recvmsg_nocancel,  recvmsg),
    MACX_(__NR_sendmsg_nocancel,  sendmsg),
@@ -10602,7 +11766,9 @@ const SyscallTableEntry ML_(syscall_table)[] = {
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(435)),        // ???
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(436)),        // ???
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(437)),        // ???
-// _____(__NR_shared_region_map_and_slide_np),          // 438
+#if DARWIN_VERS >= DARWIN_11_00
+    MACX_(__NR_shared_region_map_and_slide_np, shared_region_map_and_slide_np), // 438
+#endif
 // _____(__NR_kas_info),                                // 439
 // _____(__NR_memorystatus_control),                    // 440
     MACX_(__NR_guarded_open_np, guarded_open_np),
@@ -10616,11 +11782,17 @@ const SyscallTableEntry ML_(syscall_table)[] = {
    MACXY(__NR_sysctlbyname,        sysctlbyname),       // 274
    MACXY(__NR_necp_match_policy,   necp_match_policy),  // 460
    MACXY(__NR_getattrlistbulk,     getattrlistbulk),    // 461
+   MACXY(__NR_openat,              openat),             // 463
+#if DARWIN_VERS >= DARWIN_10_13
+   MACXY(__NR_openat_nocancel,     openat_nocancel),    // 464
+#endif
    MACX_(__NR_faccessat,           faccessat),          // 466
-   MACX_(__NR_fstatat64,           fstatat64),          // 470
-   MACX_(__NR_readlinkat,          readlinkat),         // 473
+   MACXY(__NR_fstatat64,           fstatat64),          // 470
+   MACX_(__NR_unlinkat,            unlinkat),           // 472
+   MACXY(__NR_readlinkat,          readlinkat),         // 473
+   MACX_(__NR_mkdirat,             mkdirat),            // 475
    MACX_(__NR_bsdthread_ctl,       bsdthread_ctl),      // 478
-   MACX_(__NR_csrctl,              csrctl),             // 483
+   MACXY(__NR_csrctl,              csrctl),             // 483
    MACX_(__NR_guarded_open_dprotected_np, guarded_open_dprotected_np),  // 484
    MACX_(__NR_guarded_write_np, guarded_write_np),      // 485
    MACX_(__NR_guarded_pwrite_np, guarded_pwrite_np),    // 486
@@ -10646,9 +11818,9 @@ const SyscallTableEntry ML_(syscall_table)[] = {
 // _____(__NR_kdebug_typefilter),                       // 177
 // _____(__NR_clonefileat),                             // 462
 // _____(__NR_renameatx_np),                            // 488
-   MACX_(__NR_getentropy, getentropy),                  // 500
-// _____(__NR_necp_open),                               // 501
-// _____(__NR_necp_client_action),                      // 502
+   MACXY(__NR_getentropy, getentropy),                  // 500
+   MACX_(__NR_necp_open, necp_open),                    // 501
+   MACX_(__NR_necp_client_action, necp_client_action),  // 502
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(503)),        // ???
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(504)),        // ???
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(505)),        // ???
@@ -10666,12 +11838,12 @@ const SyscallTableEntry ML_(syscall_table)[] = {
 // _____(__NR_fclonefileat),                            // 517
 // _____(__NR_fs_snapshot),                             // 518
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_UNIX(519)),        // ???
-// _____(__NR_terminate_with_payload),                  // 520
-// _____(__NR_abort_with_payload),                      // 521
+   MACX_(__NR_terminate_with_payload, terminate_with_payload), // 520
+   MACX_(__NR_abort_with_payload, abort_with_payload),  // 521
 #endif
 #if DARWIN_VERS >= DARWIN_10_13
 // _____(__NR_thread_selfcounts),                       // 186
-// _____(__NR_kevent_id,                                // 375
+  MACXY(__NR_kevent_id, kevent_id),                     // 375
 // _____(__NR_necp_session_open),                       // 522
 // _____(__NR_necp_session_action),                     // 523
 // _____(__NR_setattrlistat),                           // 524
@@ -10681,8 +11853,35 @@ const SyscallTableEntry ML_(syscall_table)[] = {
 // _____(__NR_ntp_gettime),                             // 528
 // _____(__NR_os_fault_with_payload),                   // 529
 #endif
-// _____(__NR_MAXSYSCALL)
-   MACX_(__NR_DARWIN_FAKE_SIGRETURN, FAKE_SIGRETURN)
+#if DARWIN_VERS >= DARWIN_10_14
+// _____(__NR_kqueue_workloop_ctl),                     // 530
+// _____(__NR___mach_bridge_remote_time),               // 531
+#endif
+#if DARWIN_VERS >= DARWIN_10_15
+// _____(__NR_coalition_ledger),                        // 532
+// _____(__NR_log_data),                                // 533
+// _____(__NR_memorystatus_available_memory),           // 534
+#endif
+#if DARWIN_VERS >= DARWIN_11_00
+#if defined(VGP_arm64_darwin)
+   MACX_(__NR_objc_bp_assist_cfg_np, objc_bp_assist_cfg_np), // 535
+#endif
+// _____(__NR_shared_region_map_and_slide_2_np),        // 536
+// _____(__NR_pivot_root),                              // 537
+// _____(__NR_task_inspect_for_pid),                    // 538
+   MACXY(__NR_task_read_for_pid, task_read_for_pid),    // 539
+// _____(__NR_sys_preadv),                              // 540
+// _____(__NR_sys_pwritev),                             // 541
+// _____(__NR_sys_preadv_nocancel),                     // 542
+// _____(__NR_sys_pwritev_nocancel),                    // 543
+   MACX_(__NR_ulock_wait2, ulock_wait2),                // 544
+// _____(__NR_proc_info_extended_id),                   // 545
+#endif
+#if DARWIN_VERS >= DARWIN_12_00
+// _____(__NR_tracker_action),                          // 546
+// _____(__NR_debug_syscall_reject),                    // 547
+#endif
+   MACX_(__NR_darwin_fake_sigreturn, fake_sigreturn)
 };
 
 
@@ -10703,12 +11902,12 @@ const SyscallTableEntry ML_(mach_trap_table)[] = {
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(9)), 
 
 #  if DARWIN_VERS >= DARWIN_10_8
-   MACXY(__NR_kernelrpc_mach_vm_allocate_trap, kernelrpc_mach_vm_allocate_trap),
+   MACXY(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(10), kernelrpc_mach_vm_allocate_trap),
 #  else
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(10)), 
 #  endif
 
-   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(11)), 
+   MACX_(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(11), kernelrpc_mach_vm_purgable_control_trap),
 
 #  if DARWIN_VERS >= DARWIN_10_8
    MACXY(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(12), kernelrpc_mach_vm_deallocate_trap),
@@ -10759,21 +11958,26 @@ const SyscallTableEntry ML_(mach_trap_table)[] = {
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(25)),
 #  endif
 
-   MACXY(__NR_mach_reply_port, mach_reply_port), 
-   MACXY(__NR_thread_self_trap, mach_thread_self), 
-   MACXY(__NR_task_self_trap, mach_task_self), 
-   MACXY(__NR_host_self_trap, mach_host_self), 
-   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(30)), 
-   MACXY(__NR_mach_msg_trap, mach_msg), 
-// _____(__NR_mach_msg_overwrite_trap), 
-   MACX_(__NR_semaphore_signal_trap, semaphore_signal), 
-   MACX_(__NR_semaphore_signal_all_trap, semaphore_signal_all), 
-   MACX_(__NR_semaphore_signal_thread_trap, semaphore_signal_thread), 
-   MACX_(__NR_semaphore_wait_trap, semaphore_wait), 
-   MACX_(__NR_semaphore_wait_signal_trap, semaphore_wait_signal), 
-   MACX_(__NR_semaphore_timedwait_trap, semaphore_timedwait), 
-   MACX_(__NR_semaphore_timedwait_signal_trap, semaphore_timedwait_signal), 
+   MACXY(__NR_mach_reply_port, mach_reply_port),
+   MACXY(__NR_thread_self_trap, mach_thread_self),
+   MACXY(__NR_task_self_trap, mach_task_self),
+   MACXY(__NR_host_self_trap, mach_host_self),
+   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(30)),
+   MACXY(__NR_mach_msg_trap, mach_msg),
+// _____(__NR_mach_msg_overwrite_trap),
+   MACX_(__NR_semaphore_signal_trap, semaphore_signal),
+   MACX_(__NR_semaphore_signal_all_trap, semaphore_signal_all),
+   MACX_(__NR_semaphore_signal_thread_trap, semaphore_signal_thread),
+   MACX_(__NR_semaphore_wait_trap, semaphore_wait),
+   MACX_(__NR_semaphore_wait_signal_trap, semaphore_wait_signal),
+   MACX_(__NR_semaphore_timedwait_trap, semaphore_timedwait),
+   MACX_(__NR_semaphore_timedwait_signal_trap, semaphore_timedwait_signal),
+
+#  if DARWIN_VERS >= DARWIN_10_14
+   MACX_(__NR_kernelrpc_mach_port_get_attributes_trap, kernelrpc_mach_port_get_attributes_trap),
+#  else
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(40)),    // -40
+#  endif
 
 #  if DARWIN_VERS >= DARWIN_10_9
    MACX_(__NR_kernelrpc_mach_port_guard_trap, kernelrpc_mach_port_guard_trap),
@@ -10793,19 +11997,19 @@ const SyscallTableEntry ML_(mach_trap_table)[] = {
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(43)),
 #  endif
 
-// _____(__NR_task_name_for_pid), 
-   MACXY(__NR_task_for_pid, task_for_pid), 
-   MACXY(__NR_pid_for_task, pid_for_task), 
-   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(47)), 
+   MACXY(__NR_task_name_for_pid, task_name_for_pid),
+   MACXY(__NR_task_for_pid, task_for_pid),
+   MACXY(__NR_pid_for_task, pid_for_task),
+   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(47)),
 #if defined(VGA_x86)
-// _____(__NR_macx_swapon), 
-// _____(__NR_macx_swapoff), 
+// _____(__NR_macx_swapon),
+// _____(__NR_macx_swapoff),
 #else
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(48)),
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(49)),
 #endif
 #if DARWIN_VERS >= DARWIN_10_13
-// _____(__NR_thread_get_special_reply_port,            // 50
+   MACXY(__NR_thread_get_special_reply_port, thread_get_special_reply_port),
 #else
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(50)), 
 #endif /* DARWIN_VERS >= DARWIN_10_13 */
@@ -10835,19 +12039,24 @@ const SyscallTableEntry ML_(mach_trap_table)[] = {
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(68)), 
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(69)),
 #if DARWIN_VERS >= DARWIN_10_12
-   MACX_(__NR_host_create_mach_voucher_trap, host_create_mach_voucher_trap),
-#else 
-   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(70)), 
+   MACXY(__NR_host_create_mach_voucher_trap, host_create_mach_voucher_trap),
+#else
+   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(70)),
 #endif
-   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(71)), 
-   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(72)), 
-   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(73)), 
-   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(74)), 
-   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(75)), 
-   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(76)), 
-   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(77)), 
-   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(78)), 
-   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(79)), 
+   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(71)),
+   MACX_(__NR_mach_voucher_extract_attr_recipe_trap, mach_voucher_extract_attr_recipe_trap),
+   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(73)),
+   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(74)),
+   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(75)),
+#if DARWIN_VERS >= DARWIN_10_15
+   MACXY(__NR_kernelrpc_mach_port_type_trap, kernelrpc_mach_port_type_trap),
+   MACXY(__NR_kernelrpc_mach_port_request_notification_trap, kernelrpc_mach_port_request_notification_trap),
+#else
+   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(76)),
+   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(77)),
+#endif
+   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(78)),
+   _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(79)),
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(80)),   // -80
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(81)), 
    _____(VG_DARWIN_SYSCALL_CONSTRUCT_MACH(82)), 
@@ -10876,26 +12085,59 @@ const SyscallTableEntry ML_(mach_trap_table)[] = {
 // calling convention instead of the syscall convention.
 // Use ML_(mdep_trap_table)[syscallno - ML_(mdep_trap_base)] .
 
+const SyscallTableEntry ML_(mdep_trap_table)[] = {
 #if defined(VGA_x86)
-const SyscallTableEntry ML_(mdep_trap_table)[] = {
    MACX_(__NR_thread_fast_set_cthread_self, thread_fast_set_cthread_self), 
-};
 #elif defined(VGA_amd64)
-const SyscallTableEntry ML_(mdep_trap_table)[] = {
    MACX_(__NR_thread_fast_set_cthread_self, thread_fast_set_cthread_self), 
-};
 #else
 #error unknown architecture
 #endif
+};
 
-const UInt ML_(syscall_table_size) = 
-            sizeof(ML_(syscall_table)) / sizeof(ML_(syscall_table)[0]);
+const SyscallTableEntry* ML_(get_darwin_syscall_entry) ( UInt sysno )
+{
+   const UInt syscall_table_size =
+              sizeof(ML_(syscall_table)) / sizeof(ML_(syscall_table)[0]);
 
-const UInt ML_(mach_trap_table_size) = 
-            sizeof(ML_(mach_trap_table)) / sizeof(ML_(mach_trap_table)[0]);
+   const UInt mach_trap_table_size =
+              sizeof(ML_(mach_trap_table)) / sizeof(ML_(mach_trap_table)[0]);
 
-const UInt ML_(mdep_trap_table_size) = 
-            sizeof(ML_(mdep_trap_table)) / sizeof(ML_(mdep_trap_table)[0]);
+   const UInt mdep_trap_table_size =
+              sizeof(ML_(mdep_trap_table)) / sizeof(ML_(mdep_trap_table)[0]);
+
+   const SyscallTableEntry *table;
+   Int size;
+
+   switch (VG_DARWIN_SYSNO_CLASS(sysno)) {
+   case VG_DARWIN_SYSCALL_CLASS_UNIX:
+      table = ML_(syscall_table);
+      size = syscall_table_size;
+      break;
+   case VG_DARWIN_SYSCALL_CLASS_MACH:
+      table = ML_(mach_trap_table);
+      size = mach_trap_table_size;
+      break;
+   case VG_DARWIN_SYSCALL_CLASS_MDEP:
+      table = ML_(mdep_trap_table);
+      size = mdep_trap_table_size;
+      break;
+   default:
+      vg_assert2(0, "invalid syscall class: %d (syscall: %d / %#x)\n", VG_DARWIN_SYSNO_CLASS(sysno), VG_DARWIN_SYSNO_INDEX(sysno), sysno);
+      break;
+   }
+
+   sysno = VG_DARWIN_SYSNO_INDEX(sysno);
+   if (sysno < size) {
+      const SyscallTableEntry *sys = &table[sysno];
+      if (!sys->before)
+         return NULL; /* no entry */
+      return sys;
+   }
+
+   /* Can't find a wrapper. */
+   return NULL;
+}
 
 #endif // defined(VGO_darwin)
 

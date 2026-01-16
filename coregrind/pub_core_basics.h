@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -55,8 +55,10 @@
 
 typedef
    struct {
-      ULong r_pc; /* x86:EIP, amd64:RIP, ppc:CIA, arm:R15, mips:pc */
-      ULong r_sp; /* x86:ESP, amd64:RSP, ppc:R1,  arm:R13, mips:sp */
+      ULong r_pc; /* x86:EIP, amd64:RIP, ppc:CIA, arm:R15, mips:pc,
+                     riscv64: pc */
+      ULong r_sp; /* x86:ESP, amd64:RSP, ppc:R1,  arm:R13, mips:sp,
+                     riscv64: x2 */
       union {
          struct {
             UInt r_ebp;
@@ -102,6 +104,10 @@ typedef
             ULong r31;  /* Return address of the last subroutine call */
             ULong r28;
          } MIPS64;
+         struct {
+            ULong r_fp; /* x8 */
+            ULong r_ra; /* x1 */
+         } RISCV64;
       } misc;
    }
    UnwindStartRegs;

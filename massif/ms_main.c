@@ -11,7 +11,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -282,6 +282,12 @@ static Bool have_started_executing_code = False;
 //--- Alloc fns                                            ---//
 //------------------------------------------------------------//
 
+// alloc_fns is not used for detecting allocations
+// it is used when checking for ignore functions in the callstack
+// see filter_IPs
+// allocation detection uses the usual coregrind reaplace malloc
+// mechanism which calls ms_malloc etc. here and in the end
+// everything goes through alloc_and_record_block
 static XArray* alloc_fns;
 static XArray* ignore_fns;
 
@@ -315,36 +321,37 @@ static void init_alloc_fns(void)
    //
    DO("malloc"                                              );
    DO("__builtin_new"                                       );
-# if VG_WORDSIZE == 4
+# if VG_WORDSIZE == 4 && !defined(VGO_darwin)
    DO("operator new(unsigned)"                              );
 #else
    DO("operator new(unsigned long)"                         );
 #endif
    DO("__builtin_vec_new"                                   );
-# if VG_WORDSIZE == 4
+# if VG_WORDSIZE == 4 && !defined(VGO_darwin)
    DO("operator new[](unsigned)"                            );
 #else
    DO("operator new[](unsigned long)"                       );
 #endif
    DO("calloc"                                              );
+   DO("aligned_alloc"                                       );
    DO("realloc"                                             );
    DO("memalign"                                            );
    DO("posix_memalign"                                      );
    DO("valloc"                                              );
-# if VG_WORDSIZE == 4
+# if VG_WORDSIZE == 4 && !defined(VGO_darwin)
    DO("operator new(unsigned, std::nothrow_t const&)"       );
    DO("operator new[](unsigned, std::nothrow_t const&)"     );
-   DO("operator new(unsigned, std::align_val_t al)"         );
-   DO("operator new[](unsigned, std::align_val_t al)"       );
-   DO("operator new(unsigned, std::align_val_t al, const std::nothrow_t&)"   );
-   DO("operator new[](unsigned, std::align_val_t al, const std::nothrow_t&)" );
+   DO("operator new(unsigned, std::align_val_t)"            );
+   DO("operator new[](unsigned, std::align_val_t)"          );
+   DO("operator new(unsigned, std::align_val_t, std::nothrow_t const&)"   );
+   DO("operator new[](unsigned, std::align_val_t, std::nothrow_t const&)" );
 #else
    DO("operator new(unsigned long, std::nothrow_t const&)"  );
    DO("operator new[](unsigned long, std::nothrow_t const&)");
-   DO("operator new(unsigned long, std::align_val_t al)"    );
-   DO("operator new[](unsigned long, std::align_val_t al)"  );
-   DO("operator new(unsigned long, std::align_val_t al, const std::nothrow_t&)"   );
-   DO("operator new[](unsigned long, std::align_val_t al, const std::nothrow_t&)" );
+   DO("operator new(unsigned long, std::align_val_t)"       );
+   DO("operator new[](unsigned long, std::align_val_t)"     );
+   DO("operator new(unsigned long, std::align_val_t, std::nothrow_t const&)"   );
+   DO("operator new[](unsigned long, std::align_val_t, std::nothrow_t const&)" );
 #endif
 #if defined(VGO_darwin)
    DO("malloc_zone_malloc"                                  );
@@ -1637,7 +1644,13 @@ static void update_stack_stats(SSizeT stack_szB_delta)
 static INLINE void new_mem_stack_2(SizeT len, const HChar* what)
 {
    if (have_started_executing_code) {
-      VERB(3, "<<< new_mem_stack (%lu)\n", len);
+      if (UNLIKELY(VG_(clo_verbosity) > 3)) {
+         const ThreadId cur_tid = VG_(get_running_tid) ();
+         const Addr cur_IP = VG_(get_IP) (cur_tid);
+         VERB(3, "<<< new_mem_stack (%lu) tid %u IP %s\n",
+              len, cur_tid,
+              VG_(describe_IP)(VG_(current_DiEpoch)(), cur_IP, NULL));
+      }
       n_stack_allocs++;
       update_stack_stats(len);
       maybe_take_snapshot(Normal, what);
@@ -2164,7 +2177,7 @@ static void ms_pre_clo_init(void)
    VG_(details_version)         (NULL);
    VG_(details_description)     ("a heap profiler");
    VG_(details_copyright_author)(
-      "Copyright (C) 2003-2017, and GNU GPL'd, by Nicholas Nethercote");
+      "Copyright (C) 2003-2024, and GNU GPL'd, by Nicholas Nethercote et al.");
    VG_(details_bug_reports_to)  (VG_BUGS_TO);
 
    VG_(details_avg_translation_sizeB) ( 330 );

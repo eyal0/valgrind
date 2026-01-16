@@ -13,7 +13,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -254,7 +254,7 @@ void VG_(sigframe_return)(ThreadId tid, const vki_ucontext_t *uc)
    /* Returning from a signal handler. */
    if (VG_(clo_trace_signals))
       VG_(message)(Vg_DebugMsg,
-                   "sigframe_return (thread %u): IP=%#lx\n",
+                   "VG_(sigframe_return) (thread %u): IP=%#lx\n",
                    tid, VG_(get_IP)(tid));
 
    /* Tell the tool. */

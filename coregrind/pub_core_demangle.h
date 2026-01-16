@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -62,6 +62,12 @@ Bool VG_(maybe_Z_demangle) ( const HChar* sym,
                              /*OUT*/Bool* isWrap,        // may be NULL
                              /*OUT*/Int*  eclassTag,     // may be NULL
                              /*OUT*/Int*  eclassPrio );  // may be NULL
+
+/*
+ * ada doesn't use a simple prefix for its mangling like D, Rust and C++
+ * So when we see an ada-like symbol this global gets set.
+ */
+extern Bool VG_(lang_is_ada);
 
 #endif   // __PUB_CORE_DEMANGLE_H
 

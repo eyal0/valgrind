@@ -48,7 +48,7 @@
 }
 
 {
-   scalar delete nothow bad alignment
+   scalar delete nothrow bad alignment
    Memcheck:BadAlign
    fun:_ZdlPvSt11align_val_tRKSt9nothrow_t
    fun:main
@@ -125,7 +125,7 @@
 }
 
 {
-   array new aligned bad alignment, 32bit
+   array new aligned bad alignment, 32 bit
    Memcheck:BadAlign
    fun:_ZnajSt11align_val_t
    fun:main

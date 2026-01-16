@@ -11,7 +11,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -133,6 +133,22 @@ __attribute__((returns_twice))
 UWord VG_MINIMAL_SETJMP(VG_MINIMAL_JMP_BUF(_env));
 __attribute__((noreturn))
 void  VG_MINIMAL_LONGJMP(VG_MINIMAL_JMP_BUF(_env));
+
+#elif defined(__clang__) && defined(VGP_arm64_linux)
+
+#define VG_MINIMAL_JMP_BUF(_name)        UWord _name [13]
+__attribute__((returns_twice))
+UWord VG_MINIMAL_SETJMP(VG_MINIMAL_JMP_BUF(_env));
+__attribute__((noreturn))
+void VG_MINIMAL_LONGJMP(VG_MINIMAL_JMP_BUF(_env));
+
+#elif defined(VGP_arm64_freebsd)
+
+#define VG_MINIMAL_JMP_BUF(_name)        UWord _name [22]
+__attribute__((returns_twice))
+UWord VG_MINIMAL_SETJMP(VG_MINIMAL_JMP_BUF(_env));
+__attribute__((noreturn))
+void VG_MINIMAL_LONGJMP(VG_MINIMAL_JMP_BUF(_env));
 
 #else
 

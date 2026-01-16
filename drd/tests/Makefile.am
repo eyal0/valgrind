@@ -4,19 +4,21 @@ include $(top_srcdir)/Makefile.tool-tests.am
 dist_noinst_SCRIPTS =		    \
 	compare_error_count_with    \
 	filter_annotate_barrier_xml \
-	filter_error_count	    \
-	filter_error_summary	    \
 	filter_lambda               \
-	filter_stderr               \
 	filter_stderr_and_thread_no \
-	filter_stderr_and_thread_no_and_offset \
 	filter_stderr_solaris       \
-	filter_thread_no	    \
 	filter_thread_name_xml      \
-	filter_xml_and_thread_no    \
 	run_openmp_test             \
 	supported_libpthread	    \
 	supported_sem_init
+
+noinst_SCRIPTS = \
+	filter_error_count \
+	filter_error_summary \
+	filter_stderr \
+	filter_stderr_and_thread_no_and_offset \
+	filter_thread_no \
+	filter_xml_and_thread_no
 
 noinst_HEADERS =                                    \
 	tsan_thread_wrappers_pthread.h		    \
@@ -68,11 +70,13 @@ EXTRA_DIST =                                        \
 	annotate_ignore_write2.stderr.exp	    \
 	annotate_ignore_write2.stderr.exp-solaris   \
 	annotate_ignore_write2.vgtest		    \
+	annotate_trace_memory.stderr.exp-arm        \
 	annotate_trace_memory.stderr.exp-32bit	    \
 	annotate_trace_memory.stderr.exp-32bit-clang \
 	annotate_trace_memory.stderr.exp-64bit	    \
-	annotate_trace_memory.stderr.exp-mips32	   \
+	annotate_trace_memory.stderr.exp-mips32	    \
 	annotate_trace_memory.vgtest		    \
+	annotate_trace_memory_xml.stderr.exp-arm    \
 	annotate_trace_memory_xml.stderr.exp-32bit  \
 	annotate_trace_memory_xml.stderr.exp-32bit-clang \
 	annotate_trace_memory_xml.stderr.exp-64bit  \
@@ -87,11 +91,13 @@ EXTRA_DIST =                                        \
 	bug322621.vgtest			    \
 	bug322621.stderr.exp			    \
 	bar_bad.stderr.exp			    \
+	bar_bad.stderr.exp-no-barrier		    \
 	bar_bad.stderr.exp-nohang		    \
 	bar_bad.stderr.exp-solaris		    \
 	bar_bad.stderr.exp-freebsd		    \
 	bar_bad.vgtest				    \
 	bar_bad_xml.stderr.exp			    \
+	bar_bad_xml.stderr.exp-no-barrier	    \
 	bar_bad_xml.stderr.exp-nohang		    \
 	bar_bad_xml.stderr.exp-solaris		    \
 	bar_bad_xml.stderr.exp-freebsd		    \
@@ -152,14 +158,12 @@ EXTRA_DIST =                                        \
 	hold_lock_1.vgtest                          \
 	hold_lock_2.stderr.exp                      \
 	hold_lock_2.vgtest                          \
-	getaddrinfo.stderr.exp                      \
 	getaddrinfo.vgtest                          \
 	linuxthreads_det.stderr.exp                 \
 	linuxthreads_det.stderr.exp-linuxthreads    \
 	linuxthreads_det.stdout.exp                 \
 	linuxthreads_det.stdout.exp-linuxthreads    \
 	linuxthreads_det.vgtest                     \
-	local_static.stderr.exp                     \
 	local_static.vgtest                         \
 	matinv.stderr.exp                           \
 	matinv.stdout.exp                           \
@@ -214,17 +218,14 @@ EXTRA_DIST =                                        \
 	pth_create_glibc_2_0.stderr.exp             \
 	pth_create_glibc_2_0.vgtest                 \
 	pth_detached.stderr.exp                     \
-	pth_detached.stdout.exp                     \
 	pth_detached.vgtest                         \
 	pth_detached2.stderr.exp                    \
-	pth_detached2.stdout.exp                    \
 	pth_detached2.vgtest                        \
 	pth_detached3.stderr.exp1                   \
 	pth_detached3.stderr.exp2                   \
 	pth_detached3.stderr.exp-freebsd            \
 	pth_detached3.vgtest                        \
 	pth_detached_sem.stderr.exp                 \
-	pth_detached_sem.stdout.exp                 \
 	pth_detached_sem.vgtest                     \
 	pth_inconsistent_cond_wait.stderr.exp1      \
 	pth_inconsistent_cond_wait.stderr.exp2      \
@@ -265,6 +266,8 @@ EXTRA_DIST =                                        \
 	sem_as_mutex3.stderr.exp-mips32-be          \
 	sem_as_mutex3.stderr.exp-mips32-le          \
 	sem_as_mutex3.vgtest                        \
+	sem_clockwait_np.stdout.exp                 \
+	sem_clockwait_np.vgtest                     \
 	sem_open.stderr.exp                         \
 	sem_open.stderr.exp-mips32-be               \
 	sem_open.stderr.exp-mips32-le               \
@@ -349,13 +352,14 @@ EXTRA_DIST =                                        \
 	tc18_semabuse.vgtest                        \
 	tc19_shadowmem.stderr.exp-32bit             \
 	tc19_shadowmem.stderr.exp-32bit-BE          \
+	tc19_shadowmem.stderr.exp-32on64            \
 	tc19_shadowmem.stderr.exp-64bit             \
 	tc19_shadowmem.vgtest                       \
 	tc21_pthonce.stderr.exp                     \
 	tc21_pthonce.stdout.exp                     \
 	tc21_pthonce.vgtest                         \
-	tc22_exit_w_lock.stderr.exp-32bit	    \
-	tc22_exit_w_lock.stderr.exp-64bit           \
+	tc22_exit_w_lock.stderr.exp                 \
+	tc22_exit_w_lock.stderr.exp-solaris         \
 	tc22_exit_w_lock.vgtest                     \
 	tc23_bogus_condwait.stderr.exp-linux-x86    \
 	tc23_bogus_condwait.stderr.exp-linux-ppc    \
@@ -540,7 +544,9 @@ bug322621_SOURCES           = bug322621.cpp
 condvar_SOURCES		    = condvar.cpp
 condvar_CXXFLAGS            = $(AM_CXXFLAGS) -std=c++0x
 concurrent_close_SOURCES    = concurrent_close.cpp
-if !VGCONF_OS_IS_FREEBSD
+if VGCONF_OS_IS_FREEBSD
+dlopen_main_LDADD           = ${LDADD}
+else
 dlopen_main_LDADD           = -ldl
 endif
 dlopen_lib_so_SOURCES       = dlopen_lib.c
@@ -564,9 +570,11 @@ pth_create_chain_CFLAGS     += -D__EXTENSIONS__
 pth_detached_CFLAGS         += -D__EXTENSIONS__
 endif
 
+sem_as_mutex_CGLAGS         = ${AM_CFLAGS} @FLAG_W_NO_DEPRECATED_DECLARATIONS@
 tsan_unittest_SOURCES       = tsan_unittest.cpp
 tsan_unittest_CXXFLAGS      = $(AM_CXXFLAGS) \
-			-DTHREAD_WRAPPERS='"tsan_thread_wrappers_pthread.h"'
+			-DTHREAD_WRAPPERS='"tsan_thread_wrappers_pthread.h"' \
+			@FLAG_W_NO_UNUSED_BUT_SET_VARIABLE@ @FLAG_W_NO_DEPRECATED_DECLARATIONS@
 
 unit_bitmap_CFLAGS          = $(AM_CFLAGS) -O2 \
                               -DENABLE_DRD_CONSISTENCY_CHECKS \
@@ -613,6 +621,7 @@ if HAVE_PTHREAD_BARRIER
 matinv_LDADD                = $(LDADD) -lm
 endif
 
+pth_detached_sem_CFLAGS     = ${AM_CFLAGS} @FLAG_W_NO_DEPRECATED_DECLARATIONS@
 rwlock_test_CFLAGS          = $(AM_CFLAGS) @FLAG_W_NO_UNUSED_BUT_SET_VARIABLE@
 if VGCONF_OS_IS_SOLARIS
 rwlock_test_CFLAGS          += -D__EXTENSIONS__
@@ -649,10 +658,11 @@ if !VGCONF_OS_IS_SOLARIS
 std_thread2_LDFLAGS          = -Wl,--no-as-needed
 endif
 
+sem_as_mutex_CFLAGS         = ${AM_CFLAGS} @FLAG_W_NO_DEPRECATED_DECLARATIONS@
 sem_wait_SOURCES            = sem_wait.cpp
 
 swapcontext_SOURCES         = swapcontext.c
-swapcontext_CFLAGS          = $(AM_CFLAGS) -g
+swapcontext_CFLAGS          = $(AM_CFLAGS) -g @FLAG_W_NO_DEPRECATED_DECLARATIONS@
 if VGCONF_OS_IS_SOLARIS
 swapcontext_CFLAGS          += -D__EXTENSIONS__
 endif

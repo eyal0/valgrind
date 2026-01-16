@@ -13,7 +13,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -45,6 +45,7 @@
 #include "minilzo.h"
 #define TINFL_HEADER_FILE_ONLY
 #include "tinfl.c"
+#include "zstd.h"
 
 /* These values (1024 entries of 8192 bytes each) gives a cache
    size of 8MB. */
@@ -54,6 +55,9 @@
 #define CACHE_ENTRY_SIZE      (1 << CACHE_ENTRY_SIZE_BITS)
 
 #define COMPRESSED_SLICE_ARRAY_GROW_SIZE 64
+
+#define ELFCOMPRESS_ZLIB 1
+#define ELFCOMPRESS_ZSTD 2
 
 /* An entry in the cache. */
 typedef
@@ -69,10 +73,11 @@ typedef
 /* Compressed slice */
 typedef
    struct {
-      DiOffT offD;  // offset of decompressed data
-      SizeT  szD;   // size of decompressed data
-      DiOffT offC;  // offset of compressed data
-      SizeT  szC;   // size of compressed data
+      DiOffT offD;   // offset of decompressed data
+      SizeT  szD;    // size of decompressed data
+      DiOffT offC;   // offset of compressed data
+      SizeT  szC;    // size of compressed data
+      UChar  typeC;  // type of compressed data
    }
    CSlc;
 
@@ -134,8 +139,8 @@ static Bool is_sane_CEnt ( const HChar* who, const DiImage* img, UInt i )
    if (!(ce->used <= ce->size)) goto fail;
    if (ce->fromC) {
       // ce->size can be anything, but ce->used must be either the
-      // same or zero, in the case that it hasn't been set yet.  
-      // Similarly, ce->off must either be above the real_size 
+      // same or zero, in the case that it hasn't been set yet.
+      // Similarly, ce->off must either be above the real_size
       // threshold, or zero if it hasn't been set yet.
       if (!(ce->off >= img->real_size || ce->off == 0)) goto fail;
       if (!(ce->off + ce->used <= img->size)) goto fail;
@@ -427,7 +432,7 @@ static Bool parse_Frame_asciiz ( const Frame* fr, const HChar* tag,
 static Bool parse_Frame_le64_le64_le64_bytes (
                const Frame* fr, const HChar* tag,
                /*OUT*/ULong* n1, /*OUT*/ULong* n2, /*OUT*/ULong* n3,
-               /*OUT*/UChar** data, /*OUT*/ULong* n_data 
+               /*OUT*/UChar** data, /*OUT*/ULong* n_data
             )
 {
    vg_assert(VG_(strlen)(tag) == 4);
@@ -576,14 +581,38 @@ static void set_CEnt ( const DiImage* img, UInt entNo, DiOffT off )
       UInt delay = now - t_last;
       t_last = now;
       nread += len;
-      VG_(printf)("XXXXXXXX (tot %'llu)  read %'lu  offset %'llu  delay %'u\n", 
+      VG_(printf)("XXXXXXXX (tot %'llu)  read %'lu  offset %'llu  delay %'u\n",
                   nread, len, off, delay);
    }
 
    if (img->source.is_local) {
       // Simple: just read it
+      if (img->source.fd == -1) {
+        VG_(memcpy)(&ce->data[0], ((const char *)img->source.session_id) + off, len);
+      } else {
+      // PJF not quite so simple - see
+      // https://bugs.kde.org/show_bug.cgi?id=480405
+      // if img->source.fd was opened with O_DIRECT the memory needs
+      // to be aligned and also the length
+      // that's a lot of hassle just to take a quick peek to see if
+      // is an ELF binary so just twiddle the flag before and after
+      // peeking.
+      // This doesn't seem to be a problem on FreeBSD. I haven't tested
+      // on macOS or Solaris, hence the conditional compilation
+#if defined(VKI_O_DIRECT)
+      Int flags = VG_(fcntl)(img->source.fd, VKI_F_GETFL, 0);
+      if (flags & VKI_O_DIRECT) {
+          VG_(fcntl)(img->source.fd, VKI_F_SETFL, flags & ~VKI_O_DIRECT);
+      }
+#endif
       SysRes sr = VG_(pread)(img->source.fd, &ce->data[0], (Int)len, off);
+#if defined(VKI_O_DIRECT)
+      if (flags & VKI_O_DIRECT) {
+         VG_(fcntl)(img->source.fd, VKI_F_SETFL, flags);
+      }
+#endif
       vg_assert(!sr_isError(sr));
+      }
    } else {
       // Not so simple: poke the server
       vg_assert(img->source.session_id > 0);
@@ -645,7 +674,7 @@ static void set_CEnt ( const DiImage* img, UInt entNo, DiOffT off )
      end_of_else_clause:
       {}
    }
-   
+
    ce->off  = off;
    ce->used = len;
    ce->fromC = False;
@@ -735,11 +764,20 @@ static UChar get_slowcase ( DiImage* img, DiOffT off )
          vg_assert(is_sane_CEnt("get_slowcase-case-1", img, i));
          vg_assert(img->ces_used == ces_used_at_entry + 1);
       } else {
-         SizeT len = tinfl_decompress_mem_to_mem(
-                        img->ces[i]->data, cslc->szD,
-                        cbuf, cslc->szC,
-                        TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF
-                        | TINFL_FLAG_PARSE_ZLIB_HEADER);
+         SizeT len;
+         if(cslc->typeC == ELFCOMPRESS_ZLIB) {
+            len = tinfl_decompress_mem_to_mem(
+               img->ces[i]->data, cslc->szD,
+               cbuf, cslc->szC,
+               TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF
+               | TINFL_FLAG_PARSE_ZLIB_HEADER);
+         }
+         else {
+            len = ZSTD_decompress(
+               img->ces[i]->data, cslc->szD,
+               cbuf, cslc->szC);
+         }
+
          vg_assert(len == cslc->szD); // sanity check on data, FIXME
          vg_assert(cslc->szD == size);
          img->ces[i]->used = cslc->szD;
@@ -785,11 +823,19 @@ static UChar get_slowcase ( DiImage* img, DiOffT off )
       img->ces[i]->fromC = False;
       vg_assert(is_sane_CEnt("get_slowcase-case-2", img, i));
    } else {
-      SizeT len = tinfl_decompress_mem_to_mem(
-                     img->ces[i]->data, cslc->szD,
-                     cbuf, cslc->szC,
-                     TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF
-                     | TINFL_FLAG_PARSE_ZLIB_HEADER);
+      SizeT len;
+      if(cslc->typeC == ELFCOMPRESS_ZLIB) {
+         len = tinfl_decompress_mem_to_mem(
+            img->ces[i]->data, cslc->szD,
+            cbuf, cslc->szC,
+            TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF
+            | TINFL_FLAG_PARSE_ZLIB_HEADER);
+      }
+      else {
+         len = ZSTD_decompress(
+            img->ces[i]->data, cslc->szD,
+            cbuf, cslc->szC);
+      }
       vg_assert(len == size);
       img->ces[i]->used = size;
       img->ces[i]->off = cslc->offD;
@@ -845,7 +891,7 @@ DiImage* ML_(img_from_local_file)(const HChar* fullpath)
        || /* size is unrepresentable as a SizeT */
           size != (DiOffT)(SizeT)(size)) {
       VG_(close)(sr_Res(fd));
-      return NULL; 
+      return NULL;
    }
 
    DiImage* img = ML_(dinfo_zalloc)("di.image.ML_iflf.1", sizeof(DiImage));
@@ -915,6 +961,39 @@ DiImage* ML_(img_from_fd)(Int fd, const HChar* fullpath)
    return img;
 }
 
+/* Create an image from a place in memory, this is to support certain use cases (DSC on macOS)
+   where images are already loaded in memory without changing every usage of DiImage. */
+DiImage* ML_(img_from_memory)(Addr a, SizeT size, const HChar* fullpath)
+{
+   if (size == 0 || size == DiOffT_INVALID
+       || /* size is unrepresentable as a SizeT */
+          size != (DiOffT)(SizeT)(size)) {
+      return NULL;
+   }
+
+   DiImage* img = ML_(dinfo_zalloc)("di.image.ML_iflf.1", sizeof(DiImage));
+   img->source.is_local   = True;
+   img->source.fd         = -1;
+   img->source.session_id = a; // FIXME: hacky, but avoids a new variable
+   img->size              = size;
+   img->real_size         = size;
+   img->ces_used          = 0;
+   img->source.name       = ML_(dinfo_strdup)("di.image.ML_iflf.2", fullpath);
+   img->cslc              = NULL;
+   img->cslc_size         = 0;
+   img->cslc_used         = 0;
+
+   /* Force the zeroth entry to be the first chunk of the file.
+      That's likely to be the first part that's requested anyway, and
+      loading it at this point forcing img->cent[0] to always be
+      non-empty, thereby saving us an is-it-empty check on the fast
+      path in get(). */
+   UInt entNo = alloc_CEnt(img, CACHE_ENTRY_SIZE, False/*!fromC*/);
+   vg_assert(entNo == 0);
+   set_CEnt(img, 0, 0);
+
+   return img;
+}
 
 
 /* Create an image from a file on a remote debuginfo server.  This is
@@ -941,7 +1020,7 @@ DiImage* ML_(img_from_di_server)(const HChar* filename,
    if (!set_blocking(sd))
       return NULL;
    Int one = 1;
-   Int sr = VG_(setsockopt)(sd, VKI_IPPROTO_TCP, VKI_TCP_NODELAY, 
+   Int sr = VG_(setsockopt)(sd, VKI_IPPROTO_TCP, VKI_TCP_NODELAY,
                             &one, sizeof(one));
    vg_assert(sr == 0);
 
@@ -1027,7 +1106,7 @@ DiImage* ML_(img_from_di_server)(const HChar* filename,
 }
 
 DiOffT ML_(img_mark_compressed_part)(DiImage* img, DiOffT offset, SizeT szC,
-                                     SizeT szD)
+                                     SizeT szD, UChar typeC)
 {
    DiOffT ret;
    vg_assert(img != NULL);
@@ -1044,6 +1123,7 @@ DiOffT ML_(img_mark_compressed_part)(DiImage* img, DiOffT offset, SizeT szC,
    img->cslc[img->cslc_used].szC = szC;
    img->cslc[img->cslc_used].offD = img->size;
    img->cslc[img->cslc_used].szD = szD;
+   img->cslc[img->cslc_used].typeC = typeC;
    img->size += szD;
    img->cslc_used++;
    return ret;
@@ -1072,9 +1152,11 @@ void ML_(img_done)(DiImage* img)
 {
    vg_assert(img != NULL);
    if (img->source.is_local) {
+      if (img->source.fd != -1) {
       /* Close the file; nothing else to do. */
       vg_assert(img->source.session_id == 0);
       VG_(close)(img->source.fd);
+      }
    } else {
       /* Close the socket.  The server can detect this and will scrub
          the connection when it happens, so there's no need to tell it
@@ -1219,6 +1301,20 @@ Int ML_(img_strcmp_c)(DiImage* img, DiOffT off1, const HChar* str2)
       if (c1 == 0) return 0;
       off1++; str2++;
    }
+}
+
+Int ML_(img_strcmp_n)(DiImage* img, DiOffT off1, const HChar* str2, Word n)
+{
+   ensure_valid(img, off1, 1, "ML_(img_strcmp_c)");
+   while (n) {
+      UChar c1 = get(img, off1);
+      UChar c2 = *(const UChar*)str2;
+      if (c1 < c2) return -1;
+      if (c1 > c2) return 1;
+      if (c1 == 0) return 0;
+      off1++; str2++; --n;
+   }
+   return 0;
 }
 
 UChar ML_(img_get_UChar)(DiImage* img, DiOffT offset)

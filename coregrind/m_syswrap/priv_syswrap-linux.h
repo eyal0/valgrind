@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -40,6 +40,7 @@ extern void ML_(call_on_new_stack_0_1) ( Addr stack, Addr retaddr,
 
 // Linux-specific (but non-arch-specific) syscalls
 
+DECL_TEMPLATE(linux, sys_ustat);
 DECL_TEMPLATE(linux, sys_clone)
 DECL_TEMPLATE(linux, sys_mount);
 DECL_TEMPLATE(linux, sys_oldumount);
@@ -49,6 +50,7 @@ DECL_TEMPLATE(linux, sys_preadv);
 DECL_TEMPLATE(linux, sys_preadv2);
 DECL_TEMPLATE(linux, sys_pwritev);
 DECL_TEMPLATE(linux, sys_pwritev2);
+DECL_TEMPLATE(linux, sys_io_pgetevents);
 DECL_TEMPLATE(linux, sys_sendmmsg);
 DECL_TEMPLATE(linux, sys_recvmmsg);
 DECL_TEMPLATE(linux, sys_dup3);
@@ -58,6 +60,9 @@ DECL_TEMPLATE(linux, sys_tee);
 DECL_TEMPLATE(linux, sys_vmsplice);
 DECL_TEMPLATE(linux, sys_readahead);
 DECL_TEMPLATE(linux, sys_move_pages);
+DECL_TEMPLATE(linux, sys_cachestat);
+DECL_TEMPLATE(linux, sys_sysfs);
+DECL_TEMPLATE(linux, sys_setdomainname);
 
 // clone is similar enough between linux variants to have a generic
 // version, but which will call an extern defined in syswrap-<platform>-linux.c
@@ -106,6 +111,7 @@ DECL_TEMPLATE(linux, sys_epoll_ctl);
 DECL_TEMPLATE(linux, sys_epoll_wait);
 DECL_TEMPLATE(linux, sys_epoll_pwait);
 DECL_TEMPLATE(linux, sys_epoll_pwait2);
+DECL_TEMPLATE(linux, sys_remap_file_pages);
 DECL_TEMPLATE(linux, sys_eventfd);
 DECL_TEMPLATE(linux, sys_eventfd2);
 
@@ -249,6 +255,7 @@ DECL_TEMPLATE(linux, sys_munlockall);
 DECL_TEMPLATE(linux, sys_pipe);
 DECL_TEMPLATE(linux, sys_pipe2);
 DECL_TEMPLATE(linux, sys_quotactl);
+DECL_TEMPLATE(linux, sys_quotactl_fd);
 DECL_TEMPLATE(linux, sys_waitid);
 
 // Posix, but in Darwin utime is a libc function that calls syscall utimes.
@@ -281,6 +288,9 @@ DECL_TEMPLATE(linux, sys_init_module);
 DECL_TEMPLATE(linux, sys_finit_module);
 DECL_TEMPLATE(linux, sys_delete_module);
 
+DECL_TEMPLATE(linux, sys_swapon);
+DECL_TEMPLATE(linux, sys_swapoff);
+
 // Linux-specific (oprofile-related)
 DECL_TEMPLATE(linux, sys_lookup_dcookie);        // (*/32/64) L
 
@@ -309,6 +319,9 @@ DECL_TEMPLATE(linux, sys_execveat);
 // Linux-specific (new in Linux 4.11)
 DECL_TEMPLATE(linux, sys_statx);
 
+// Linux-specific (new in Linux 4.3)
+DECL_TEMPLATE(linux, sys_userfaultfd);
+
 // Linux-specific memory protection key syscalls (since Linux 4.9)
 DECL_TEMPLATE(linux, sys_pkey_alloc);
 DECL_TEMPLATE(linux, sys_pkey_free);
@@ -321,6 +334,14 @@ DECL_TEMPLATE(linux, sys_io_uring_setup);
 DECL_TEMPLATE(linux, sys_io_uring_enter);
 DECL_TEMPLATE(linux, sys_io_uring_register);
 
+// open_tree and friends (shared linux syscalls)
+DECL_TEMPLATE(linux, sys_open_tree);
+DECL_TEMPLATE(linux, sys_move_mount);
+DECL_TEMPLATE(linux, sys_fsopen);
+DECL_TEMPLATE(linux, sys_fsconfig);
+DECL_TEMPLATE(linux, sys_fsmount);
+DECL_TEMPLATE(linux, sys_fspick);
+
 // Linux-specific (new in Linux 5.3)
 DECL_TEMPLATE(linux, sys_pidfd_open);
 
@@ -328,8 +349,36 @@ DECL_TEMPLATE(linux, sys_pidfd_open);
 DECL_TEMPLATE(linux, sys_close_range);
 DECL_TEMPLATE(linux, sys_openat2);
 
+// Linux-specific (new in Linux 5.12)
+DECL_TEMPLATE(linux, sys_mount_setattr)
+
+// Linux-specific (new in Linux 5.13)
+DECL_TEMPLATE(linux, sys_landlock_create_ruleset)
+DECL_TEMPLATE(linux, sys_landlock_add_rule)
+DECL_TEMPLATE(linux, sys_landlock_restrict_self)
+
 // Linux-specific (new in Linux 5.14)
 DECL_TEMPLATE(linux, sys_memfd_secret);
+
+// Linux-specific (since Linux 5.6)
+DECL_TEMPLATE(linux, sys_pidfd_getfd);
+
+// Since Linux 6.6
+DECL_TEMPLATE(linux, sys_fchmodat2);
+
+// Since Linux 6.8
+DECL_TEMPLATE(linux, sys_listmount);
+DECL_TEMPLATE(linux, sys_statmount);
+
+// Since Linux 6.10
+DECL_TEMPLATE(linux, sys_mseal);
+DECL_TEMPLATE(linux, sys_lsm_get_self_attr);
+DECL_TEMPLATE(linux, sys_lsm_set_self_attr);
+DECL_TEMPLATE(linux, sys_lsm_list_modules);
+
+// Since Linux 6.17-rc1
+DECL_TEMPLATE(linux, sys_file_getattr);
+DECL_TEMPLATE(linux, sys_file_setattr);
 
 /* ---------------------------------------------------------------------
    Wrappers for sockets and ipc-ery.  These are split into standalone
@@ -431,6 +480,7 @@ DECL_TEMPLATE(linux, sys_mq_timedreceive_time64);
 DECL_TEMPLATE(linux, sys_semtimedop_time64);
 DECL_TEMPLATE(linux, sys_rt_sigtimedwait_time64);
 DECL_TEMPLATE(linux, sys_futex_time64);
+DECL_TEMPLATE(linux, sys_futex_waitv);
 DECL_TEMPLATE(linux, sys_sched_rr_get_interval_time64);
 
 // Some arch specific functions called from syswrap-linux.c
@@ -509,6 +559,13 @@ extern UInt do_syscall_clone_nanomips_linux ( Word (*fn) (void *),  /* a0 - 4 */
                                               Int*  child_tid,      /* a4 - 8 */
                                               Int*  parent_tid,     /* a5 - 9 */
                                               void* tls_ptr);       /* a6 - 10 */
+extern UInt do_syscall_clone_riscv64_linux ( Word (*fn) (void *),
+                                             void* stack,
+                                             Int   flags,
+                                             void* arg,
+                                             Int*  child_tid,
+                                             Int*  parent_tid,
+                                             void* tls_ptr);
 #endif   // __PRIV_SYSWRAP_LINUX_H
 
 /*--------------------------------------------------------------------*/

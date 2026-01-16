@@ -10,6 +10,9 @@ endif
 if VGCONF_ARCHS_INCLUDE_AMD64
 SUBDIRS += amd64
 endif
+if VGCONF_ARCHS_INCLUDE_ARM64
+SUBDIRS += arm64
+endif
 if VGCONF_ARCHS_INCLUDE_MIPS32
 SUBDIRS += mips32
 endif
@@ -50,6 +53,9 @@ endif
 if VGCONF_PLATFORMS_INCLUDE_ARM64_LINUX
 SUBDIRS += arm64-linux
 endif
+if VGCONF_PLATFORMS_INCLUDE_RISCV64_LINUX
+SUBDIRS += riscv64-linux
+endif
 if VGCONF_PLATFORMS_INCLUDE_X86_SOLARIS
 SUBDIRS += x86-solaris
 endif
@@ -62,45 +68,53 @@ endif
 if VGCONF_PLATFORMS_INCLUDE_AMD64_FREEBSD
 SUBDIRS += amd64-freebsd
 endif
+if VGCONF_PLATFORMS_INCLUDE_ARM64_FREEBSD
+SUBDIRS += arm64-freebsd
+endif
 
-DIST_SUBDIRS = x86 amd64 ppc32 ppc64 s390x linux \
-		darwin solaris x86-linux amd64-linux arm64-linux \
+DIST_SUBDIRS = x86 amd64 arm64 ppc32 ppc64 s390x linux \
+		darwin solaris x86-linux amd64-linux arm64-linux riscv64-linux \
 		x86-solaris amd64-solaris mips32 mips64 \
-		freebsd amd64-freebsd x86-freebsd \
+		freebsd amd64-freebsd arm64-freebsd x86-freebsd \
 		common .
 
 dist_noinst_SCRIPTS = \
 	filter_addressable \
 	filter_allocs \
-	filter_dw4 \
 	filter_leak_cases_possible \
 	filter_leak_cpp_interior \
-	filter_stderr filter_xml \
+	filter_libc_variants \
+	filter_xml \
+	filter_xml_leak \
 	filter_strchr \
 	filter_varinfo3 \
 	filter_memcheck \
-	filter_overlaperror \
 	filter_malloc_free \
+	filter_sendmsg \
 	filter_size_t \
 	filter_stanza \
 	filter_stanza.awk \
 	filter_used_supp \
-	filter_stanza_and_size_t
+	filter_stanza_and_size_t \
+	filter_malloc_zone \
+	run_descr_belowsp_test
+
+noinst_SCRIPTS = \
+	filter_dw4 \
+	filter_overlaperror \
+	filter_stderr \
+	filter_supp
 
 noinst_HEADERS = leak.h
 
 EXTRA_DIST = \
 	accounting.stderr.exp accounting.vgtest \
 	addressable.stderr.exp addressable.stdout.exp addressable.vgtest \
-	atomic_incs.stderr.exp atomic_incs.vgtest \
+	atomic_incs.vgtest \
 	atomic_incs.stdout.exp-32bit atomic_incs.stdout.exp-64bit \
 	atomic_incs.stdout.exp-64bit-and-128bit \
 	badaddrvalue.stderr.exp \
 	badaddrvalue.stdout.exp badaddrvalue.vgtest \
-        exit_on_first_error.stderr.exp \
-        exit_on_first_error.vgtest \
-        exit_on_first_error_with_xml.stderr.exp \
-        exit_on_first_error_with_xml.vgtest \
 	badfree-2trace.stderr.exp badfree-2trace.vgtest \
 	badfree.stderr.exp badfree.vgtest \
 	badfree3.stderr.exp badfree3.vgtest \
@@ -117,11 +131,15 @@ EXTRA_DIST = \
 		buflen_check.stderr.exp-kfail \
 	bug155125.stderr.exp bug155125.vgtest \
 	bug287260.stderr.exp bug287260.vgtest \
-	bug340392.stderr.exp bug340392.vgtest \
+	bug340392.vgtest \
+	bug445235_ada_demangle.stderr.exp bug445235_ada_demangle.vgtest \
+	bug401284.stdout.exp bug401284.vgtest \
 	bug464969_d_demangle.stderr.exp bug464969_d_demangle.vgtest \
 		bug464969_d_demangle.stdout.exp \
-	bug472219.stderr.exp bug472219.vgtest \
+	bug472219.vgtest \
+	bug484002.stdout.exp bug484002.vgtest \
 	calloc-overflow.stderr.exp calloc-overflow.vgtest\
+	cdebug_zstd.vgtest cdebug_zstd.stderr.exp \
 	cdebug_zlib.stderr.exp cdebug_zlib.vgtest \
 	cdebug_zlib_gnu.stderr.exp cdebug_zlib_gnu.vgtest \
 	client-msg.stderr.exp client-msg.vgtest \
@@ -132,19 +150,28 @@ EXTRA_DIST = \
 	clireq_nofill.stdout.exp clireq_nofill.vgtest \
 	clo_redzone_default.vgtest clo_redzone_128.vgtest \
 	clo_redzone_default.stderr.exp clo_redzone_128.stderr.exp \
-	cond_ld.vgtest cond_ld.stdout.exp cond_ld.stderr.exp-arm \
+	close_range.vgtest close_range.stderr.exp \
+	close_range.stderr.exp.linux \
+	cond_ld.vgtest cond_ld.stderr.exp-arm \
 		cond_ld.stderr.exp-64bit-non-arm \
 		cond_ld.stderr.exp-32bit-non-arm \
-	cond_st.vgtest cond_st.stdout.exp cond_st.stderr.exp-arm \
+	cond_st.vgtest cond_st.stderr.exp-arm \
 		cond_st.stderr.exp-64bit-non-arm \
 		cond_st.stderr.exp-32bit-non-arm \
 	leak_cpp_interior.stderr.exp leak_cpp_interior.stderr.exp-64bit leak_cpp_interior.vgtest libstdc++.supp \
+	leak_cpp_interior.stderr.exp-freebsd leak_cpp_interior.stderr.exp-freebsd-32bit \
+		leak_cpp_interior.stderr.exp-arm \
 	custom_alloc.stderr.exp custom_alloc.vgtest \
 		custom_alloc.stderr.exp-s390x-mvc \
-	custom-overlap.stderr.exp custom-overlap.vgtest \
+	custom-overlap.vgtest \
 	cxx17_aligned_new.stderr.exp cxx17_aligned_new.vgtest \
 		cxx17_aligned_new.stderr.exp_32 \
-		cxx17_aligned_new.stdout.exp \
+	darwin.supp \
+	duplicate_align_size_errors.stderr.exp \
+		duplicate_align_size_errors.stderr.exp-memalign \
+		duplicate_align_size_errors.stderr.exp-darwin \
+		duplicate_align_size_errors.stderr.exp-darwin2 \
+		duplicate_align_size_errors.vgtest \
 	sized_aligned_new_delete_args.stderr.exp \
 		sized_aligned_new_delete_args.vgtest \
 	sized_aligned_new_delete_misaligned1.stderr.exp \
@@ -162,31 +189,30 @@ EXTRA_DIST = \
 	sized_aligned_new_delete_misaligned1_supp.vgtest \
 		sized_aligned_new_delete_misaligned1_supp.supp \
 		sized_aligned_new_delete_misaligned1_supp.stderr.exp \
-		sized_aligned_new_delete_misaligned1_supp.stderr.exp_32 \
 	sized_aligned_new_delete_misaligned2_supp.vgtest \
 		sized_aligned_new_delete_misaligned2_supp.supp \
 		sized_aligned_new_delete_misaligned2_supp.stderr.exp \
-		sized_aligned_new_delete_misaligned2_supp.stderr.exp_32 \
+		sized_aligned_new_delete_misaligned2_supp.stderr.exp-32 \
 	sized_aligned_new_delete_misaligned3_supp.vgtest \
 		sized_aligned_new_delete_misaligned3_supp.supp \
 		sized_aligned_new_delete_misaligned3_supp.stderr.exp \
-		sized_aligned_new_delete_misaligned3_supp.stderr.exp_32 \
+		sized_aligned_new_delete_misaligned3_supp.stderr.exp-32 \
 	new_aligned_delete_default.stderr.exp \
 	new_aligned_delete_default.stderr.exp_32 \
 		new_aligned_delete_default.vgtest \
 	new_delete_mismatch_size.stderr.exp \
 		new_delete_mismatch_size.vgtest \
 	new_delete_mismatch_size_supp.stderr.exp \
-		new_delete_mismatch_size_supp.stderr.exp_32 \
+	new_delete_mismatch_size_supp.stderr.exp-32 \
 		new_delete_mismatch_size_supp.vgtest \
 		new_delete_mismatch_size_supp.supp \
 	deep-backtrace.vgtest deep-backtrace.stderr.exp \
 	demangle.stderr.exp demangle.vgtest \
-	big_debuginfo_symbol.stderr.exp big_debuginfo_symbol.vgtest \
+	big_debuginfo_symbol.vgtest \
 	describe-block.stderr.exp describe-block.vgtest \
 	descr_belowsp.vgtest descr_belowsp.stderr.exp \
 	doublefree.stderr.exp doublefree.vgtest \
-	dw4.vgtest dw4.stderr.exp dw4.stderr.exp-solaris dw4.stdout.exp \
+	dw4.vgtest dw4.stderr.exp dw4.stderr.exp-solaris \
 	err_disable1.vgtest err_disable1.stderr.exp \
 	err_disable2.vgtest err_disable2.stderr.exp \
 	err_disable3.vgtest err_disable3.stderr.exp \
@@ -195,6 +221,10 @@ EXTRA_DIST = \
 	erringfds.stderr.exp erringfds.stdout.exp erringfds.vgtest \
 	error_counts.stderr.exp error_counts.vgtest \
 	errs1.stderr.exp errs1.vgtest \
+        exit_on_first_error.stderr.exp \
+        exit_on_first_error.vgtest \
+        exit_on_first_error_with_xml.stderr.exp \
+        exit_on_first_error_with_xml.vgtest \
 	exitprog.stderr.exp exitprog.vgtest \
 	execve1.stderr.exp execve1.vgtest execve1.stderr.exp-kfail \
 	execve2.stderr.exp execve2.vgtest execve2.stderr.exp-kfail \
@@ -205,15 +235,13 @@ EXTRA_DIST = \
 	fwrite.stderr.exp fwrite.vgtest fwrite.stderr.exp-kfail \
 	gone_abrt_xml.vgtest gone_abrt_xml.stderr.exp gone_abrt_xml.stderr.exp-solaris \
 		gone_abrt_xml.stderr.exp-freebsd \
-	holey_buffer_too_small.vgtest holey_buffer_too_small.stdout.exp \
-	holey_buffer_too_small.stderr.exp \
+	holey_buffer_too_small.vgtest holey_buffer_too_small.stderr.exp \
 	inits.stderr.exp inits.vgtest \
 	inline.stderr.exp inline.stdout.exp inline.vgtest \
-	inlinfo.stderr.exp inlinfo.stdout.exp inlinfo.vgtest \
-	inlinfosupp.stderr.exp inlinfosupp.stdout.exp inlinfosupp.supp inlinfosupp.vgtest \
-	inlinfosuppobj.stderr.exp inlinfosuppobj.stdout.exp inlinfosuppobj.supp inlinfosuppobj.vgtest \
-	inltemplate.stderr.exp inltemplate.stdout.exp inltemplate.vgtest \
-		inltemplate.stderr.exp-old-gcc \
+	inlinfo.stderr.exp inlinfo.vgtest \
+	inlinfosupp.supp inlinfosupp.vgtest \
+	inlinfosuppobj.stderr.exp inlinfosuppobj.supp inlinfosuppobj.vgtest \
+	inltemplate.vgtest inltemplate.stderr.exp inltemplate.stderr.exp-old-gcc \
 	leak-0.vgtest leak-0.stderr.exp \
 	leak-cases-exit-on-definite.vgtest leak-cases-exit-on-definite.stderr.exp \
 	leak-cases-full.vgtest leak-cases-full.stderr.exp \
@@ -236,14 +264,15 @@ EXTRA_DIST = \
 	leak-autofreepool-5.stderr.exp-freebsd \
 	leak-tree.vgtest leak-tree.stderr.exp \
 	leak-segv-jmp.vgtest leak-segv-jmp.stderr.exp \
-	lks.vgtest lks.stdout.exp lks.supp lks.stderr.exp \
+	lks.vgtest lks.supp lks.stderr.exp \
 	long_namespace_xml.vgtest long_namespace_xml.stdout.exp \
-	long_namespace_xml.stderr.exp \
-	long-supps.vgtest long-supps.stderr.exp long-supps.supp \
+	long_namespace_xml.stderr.exp long_namespace_xml.stderr.exp-freebsd \
+	long-supps.vgtest long-supps.supp \
 	mallinfo.stderr.exp mallinfo.vgtest \
+	mallinfo2.stderr.exp mallinfo2.vgtest \
 	malloc_free_fill.vgtest \
 	malloc_free_fill.stderr.exp \
-	malloc_usable.stderr.exp malloc_usable.vgtest \
+	malloc_usable.vgtest \
 	malloc1.stderr.exp malloc1.vgtest \
 	malloc1_ks_none.stderr.exp malloc1_ks_none.vgtest \
 	malloc1_ks_alloc.stderr.exp malloc1_ks_alloc.vgtest \
@@ -252,19 +281,22 @@ EXTRA_DIST = \
 	malloc2.stderr.exp malloc2.vgtest \
 	malloc3.stderr.exp malloc3.stdout.exp malloc3.vgtest \
 	manuel1.stderr.exp manuel1.stdout.exp manuel1.vgtest \
-		manuel1.stderr.exp-freebsd-clang \
 	manuel2.stderr.exp manuel2.stderr.exp64 manuel2.stdout.exp \
 		manuel2.vgtest \
 	manuel3.stderr.exp manuel3.vgtest \
-	match-overrun.stderr.exp match-overrun.vgtest match-overrun.supp \
+	match-overrun.vgtest match-overrun.supp \
 	memalign_test.stderr.exp memalign_test.vgtest \
 	memalign_args.vgtest memalign_args.stderr.exp \
 		memalign_args.stderr.exp-glibc \
 		memalign_args.stderr.exp-darwin \
+		memalign_args.stderr.exp-darwin2 \
+		memalign_args.stderr.exp-darwin3 \
 		memalign_args.stderr.exp-solaris \
-	memcmptest.stderr.exp memcmptest.stderr.exp2 \
+	memccpy1.stdout.exp memccpy1.vgtest \
+	memccpy2.stderr.exp memccpy2.vgtest \
+	memcmptest.stderr.exp \
 	memcmptest.stdout.exp memcmptest.vgtest \
-	memmem.stderr.exp memmem.vgtest \
+	memmem.vgtest \
 	mempool.stderr.exp mempool.vgtest \
 	mempool2.stderr.exp mempool2.vgtest \
 	metadata.stderr.exp metadata.stdout.exp metadata.vgtest \
@@ -272,24 +304,21 @@ EXTRA_DIST = \
 		mismatches.stderr.exp2 \
 	mismatches_xml.stderr.exp mismatches_xml.vgtest \
 		mismatches_xml.stderr.exp2 \
-	mmaptest.stderr.exp mmaptest.vgtest \
-	nanoleak_supp.stderr.exp nanoleak_supp.vgtest nanoleak.supp \
-	nanoleak_dynsupp.stderr.exp nanoleak_dynsupp.vgtest \
-	nanoleak2.stderr.exp nanoleak2.vgtest \
-	new_nothrow.stderr.exp new_nothrow.vgtest \
+	mmaptest.vgtest \
+	nanoleak_supp.vgtest nanoleak.supp \
+	nanoleak_dynsupp.vgtest \
+	nanoleak2.vgtest \
+	new_nothrow.vgtest \
 	new_override.stderr.exp new_override.stdout.exp new_override.vgtest \
-	noisy_child.vgtest noisy_child.stderr.exp noisy_child.stdout.exp \
-	null_socket.stderr.exp null_socket.vgtest \
-	origin1-yes.vgtest origin1-yes.stdout.exp origin1-yes.stderr.exp \
+	noisy_child.vgtest noisy_child.stderr.exp \
+	null_socket.vgtest \
+	origin1-yes.vgtest origin1-yes.stderr.exp \
 		origin1-yes.stderr.exp-freebsd \
-	origin2-not-quite.vgtest origin2-not-quite.stdout.exp \
-	origin2-not-quite.stderr.exp \
+	origin2-not-quite.vgtest origin2-not-quite.stderr.exp \
 		origin2-not-quite.stderr.exp-freebsd \
-	origin3-no.vgtest origin3-no.stdout.exp \
+	origin3-no.vgtest origin3-no.stderr.exp \
 		origin3-no.stderr.exp-freebsd \
-	origin3-no.stderr.exp \
-	origin4-many.vgtest origin4-many.stdout.exp \
-	origin4-many.stderr.exp \
+	origin4-many.vgtest origin4-many.stderr.exp \
 	origin5-bz2.vgtest origin5-bz2.stdout.exp \
 	origin5-bz2.stderr.exp-glibc25-x86 \
 	origin5-bz2.stderr.exp-glibc25-amd64 \
@@ -299,10 +328,12 @@ EXTRA_DIST = \
 	origin5-bz2.stderr.exp-glibc212-s390x \
 	origin5-bz2.stderr.exp-glibc234-s390x \
 	origin5-bz2.stderr.exp-glibc218-mips32 \
-	origin6-fp.vgtest origin6-fp.stdout.exp \
+	origin5-bz2.stderr.exp-glibc236-arm \
+	origin6-fp.vgtest \
 	origin6-fp.stderr.exp-glibc25-amd64 \
 	origin6-fp.stderr.exp-glibc27-ppc64 \
 	overlap.stderr.exp overlap.stdout.exp overlap.vgtest \
+		overlap.stderr.exp-no_memcpy \
 	partiallydefinedeq.vgtest partiallydefinedeq.stderr.exp \
 	partiallydefinedeq.stderr.exp4 \
 	partiallydefinedeq.stderr.exp3 \
@@ -315,9 +346,9 @@ EXTRA_DIST = \
 		partial_load_dflt.stderr.exp64 \
 		partial_load_dflt.stderr.exp-ppc64 \
 	partial_load_dflt.stderr.expr-s390x-mvc \
-	pdb-realloc.stderr.exp pdb-realloc.vgtest \
-	pdb-realloc2.stderr.exp pdb-realloc2.stdout.exp pdb-realloc2.vgtest \
-	pipe.stderr.exp pipe.vgtest \
+	pdb-realloc.vgtest \
+	pdb-realloc2.stdout.exp pdb-realloc2.vgtest \
+	pipe.vgtest \
 	pointer-trace.vgtest \
 	pointer-trace.stderr.exp \
 	posix_memalign.stderr.exp posix_memalign.vgtest \
@@ -332,37 +363,38 @@ EXTRA_DIST = \
 	realloc_size_zero.stderr.exp realloc_size_zero.stdout.exp-glibc \
 		realloc_size_zero.stdout.exp-other \
 		realloc_size_zero.vgtest \
+	realloc_size_zero_xml.stderr.exp \
+		realloc_size_zero_xml.stdout.exp \
+		realloc_size_zero_xml.stdout.exp-glibc \
+		realloc_size_zero_xml.vgtest \
 	realloc_size_zero_yes.stderr.exp realloc_size_zero_yes.stdout.exp \
 		realloc_size_zero_yes.vgtest \
 	realloc_size_zero_again_yes.stderr.exp \
-		realloc_size_zero_again_yes.stdout.exp \
 		realloc_size_zero_again_yes.vgtest \
 	realloc_size_zero_no.stderr.exp realloc_size_zero_no.stdout.exp \
 		realloc_size_zero_no.vgtest \
 	realloc_size_zero_again_no.stderr.exp \
-		realloc_size_zero_again_no.stdout.exp \
 		realloc_size_zero_again_no.vgtest \
-	realloc_size_zero_off.stderr.exp realloc_size_zero_off.stdout.exp \
+	realloc_size_zero_off.stdout.exp \
 		realloc_size_zero_off.vgtest \
 	realloc_size_zero_mismatch.stderr.exp \
 		realloc_size_zero_mismatch.stdout.exp \
 		realloc_size_zero_mismatch.vgtest \
-	realloc_size_zero_supp.stderr.exp realloc_size_zero_supp.stdout.exp \
+	realloc_size_zero_supp.stdout.exp \
 		realloc_size_zero_supp.vgtest \
 		realloc_size_zero.supp \
-	realloc1.stderr.exp realloc1.vgtest \
-	realloc2.stderr.exp realloc2.vgtest \
+	realloc1.vgtest \
+	realloc2.vgtest \
 	realloc3.stderr.exp realloc3.vgtest \
 	recursive-merge.stderr.exp recursive-merge.vgtest \
 	resvn_stack.stderr.exp resvn_stack.vgtest \
 	demangle-rust.vgtest demangle-rust.stderr.exp \
 	sbfragment.stdout.exp sbfragment.stderr.exp sbfragment.vgtest \
-	sem.stderr.exp sem.vgtest \
+	sem.vgtest \
 	sendmsg.stderr.exp sendmsg.stderr.exp-solaris sendmsg.vgtest \
 	    sendmsg.stderr.exp-freebsd \
-	    sendmsg.stderr.exp-freebsd-x86 \
 	sh-mem.stderr.exp sh-mem.vgtest \
-	sh-mem-random.stderr.exp sh-mem-random.stdout.exp64 \
+	sh-mem-random.stdout.exp64 \
 	sh-mem-random.stdout.exp sh-mem-random.vgtest \
 	sigaltstack.stderr.exp sigaltstack.vgtest \
 	sigkill.stderr.exp sigkill.stderr.exp-darwin sigkill.stderr.exp-freebsd sigkill.stderr.exp-mips32 \
@@ -372,77 +404,78 @@ EXTRA_DIST = \
 	sigprocmask.stderr.exp sigprocmask.stderr.exp2 sigprocmask.vgtest \
 	sized_delete.stderr.exp sized_delete.stderr.exp-x86 sized_delete.vgtest \
 	static_malloc.stderr.exp static_malloc.vgtest \
-	stpncpy.vgtest stpncpy.stderr.exp stpncpy.stdout.exp \
+	stpncpy.vgtest stpncpy.stderr.exp \
 	strchr.stderr.exp strchr.stderr.exp2 strchr.stderr.exp3 strchr.vgtest \
-	str_tester.stderr.exp str_tester.vgtest \
+	str_tester.vgtest \
 	supp-dir.vgtest supp-dir.stderr.exp \
 	supp_unknown.stderr.exp supp_unknown.vgtest supp_unknown.supp \
 	supp_unknown.stderr.exp-kfail \
-	supp1.stderr.exp supp1.vgtest \
-	supp2.stderr.exp supp2.vgtest \
+	supp1.vgtest \
+	supp2.vgtest \
 	supp.supp \
 	suppfree.stderr.exp suppfree.supp suppfree.vgtest \
-	suppfreecollision.stderr.exp suppfreecollision.supp suppfreecollision.vgtest \
+	suppfreecollision.supp suppfreecollision.vgtest \
 	supponlyobj.stderr.exp supponlyobj.supp supponlyobj.vgtest \
-	suppsrc_lineno.stderr.exp suppsrc_lineno.stdout.exp suppsrc_lineno.vgtest \
+	suppsrc_lineno.stderr.exp suppsrc_lineno.vgtest \
 	suppsrc_lineno.supp \
-	suppsrc_sanlineno.stderr.exp suppsrc_sanlineno.stdout.exp suppsrc_sanlineno.vgtest \
+	suppsrc_sanlineno.vgtest \
 	suppsrc_sanlineno.supp \
 	suppvarinfo5.stderr.exp suppvarinfo5.supp suppvarinfo5.vgtest \
-	test-plo-no.vgtest test-plo-no.stdout.exp \
+	test-plo-no.vgtest \
 	    test-plo-no.stderr.exp-le64 test-plo-no.stderr.exp-le32 \
 	    test-plo-no.stderr.exp-le32-freebsd test-plo-no.stderr.exp-le64-freebsd \
-	    test-plo-no.stderr.exp-le32-freebsd-clang \
-	test-plo-yes.vgtest test-plo-yes.stdout.exp \
+	test-plo-yes.vgtest \
 	    test-plo-yes.stderr.exp-le64 test-plo-yes.stderr.exp-le32 \
 	    test-plo-no.stderr.exp-s390x-mvc \
-	thread_alloca.stderr.exp thread_alloca.vgtest \
+	thread_alloca.vgtest \
 	threadname.vgtest threadname.stderr.exp \
 	threadname_xml.vgtest threadname_xml.stderr.exp \
 	trivialleak.stderr.exp trivialleak.vgtest trivialleak.stderr.exp2 \
 	undef_malloc_args.stderr.exp undef_malloc_args.vgtest \
-	unit_libcbase.stderr.exp unit_libcbase.vgtest \
-	unit_oset.stderr.exp unit_oset.stdout.exp unit_oset.vgtest \
-	varinfo1.vgtest varinfo1.stdout.exp varinfo1.stderr.exp \
+	unit_libcbase.vgtest \
+	unit_oset.stdout.exp unit_oset.vgtest \
+	varinfo1.vgtest varinfo1.stderr.exp \
 		varinfo1.stderr.exp-ppc64 \
 		varinfo1.stderr.exp-freebsd \
-	varinfo2.vgtest varinfo2.stdout.exp varinfo2.stderr.exp \
+	varinfo2.vgtest varinfo2.stderr.exp \
 		varinfo2.stderr.exp-ppc64 \
-	varinfo3.vgtest varinfo3.stdout.exp varinfo3.stderr.exp \
+	varinfo3.vgtest varinfo3.stderr.exp \
 		varinfo3.stderr.exp-ppc64 \
 		varinfo3.stderr.exp-freebsd \
 	varinfo4.vgtest varinfo4.stdout.exp varinfo4.stderr.exp \
 		varinfo4.stderr.exp-ppc64 \
 		varinfo4.stderr.exp-freebsd \
-	varinfo5.vgtest varinfo5.stdout.exp varinfo5.stderr.exp \
+	varinfo5.vgtest varinfo5.stderr.exp \
 		varinfo5.stderr.exp-ppc64 \
 		varinfo5.stderr.exp-freebsd \
+		varinfo5.stderr.exp-freebsd2 \
 	varinfo6.vgtest varinfo6.stdout.exp varinfo6.stderr.exp \
 		varinfo6.stderr.exp-ppc64 \
 	varinforestrict.vgtest varinforestrict.stderr.exp \
-	vcpu_bz2.stdout.exp vcpu_bz2.stderr.exp vcpu_bz2.vgtest \
-	vcpu_fbench.stdout.exp vcpu_fbench.stderr.exp vcpu_fbench.vgtest \
+	vcpu_bz2.stdout.exp vcpu_bz2.vgtest \
+	vcpu_fbench.stdout.exp vcpu_fbench.vgtest \
 	vcpu_fnfns.stdout.exp vcpu_fnfns.stdout.exp-glibc28-amd64 \
 	vcpu_fnfns.stdout.exp-darwin vcpu_fnfns.stdout.exp-solaris \
-	vcpu_fnfns.stderr.exp vcpu_fnfns.vgtest \
-	wcs.vgtest wcs.stderr.exp wcs.stdout.exp \
-	wcsncpy.vgtest wcsncpy.stderr.exp \
-	wmemcmp.vgtest wmemcmp.stderr.exp \
-	wrap1.vgtest wrap1.stdout.exp wrap1.stderr.exp \
-	wrap2.vgtest wrap2.stdout.exp wrap2.stderr.exp \
-	wrap3.vgtest wrap3.stdout.exp wrap3.stderr.exp \
-	wrap4.vgtest wrap4.stdout.exp wrap4.stderr.exp \
-	wrap5.vgtest wrap5.stdout.exp wrap5.stderr.exp \
-	wrap6.vgtest wrap6.stdout.exp wrap6.stderr.exp \
-	wrap7.vgtest wrap7.stdout.exp wrap7.stderr.exp \
+	vcpu_fnfns.stdout.exp-illumos \
+	vcpu_fnfns.vgtest \
+	wcpncpy1.stderr.exp wcpncpy1.vgtest \
+	wcs.vgtest wcs.stderr.exp \
+	wcscat.vgtest wcscat.stdout.exp \
+	wcsncpy.vgtest \
+	wmemcmp.vgtest \
+	wrap1.vgtest wrap1.stdout.exp \
+	wrap2.vgtest wrap2.stdout.exp \
+	wrap3.vgtest wrap3.stdout.exp \
+	wrap4.vgtest wrap4.stdout.exp \
+	wrap5.vgtest wrap5.stdout.exp \
+	wrap6.vgtest wrap6.stdout.exp \
+	wrap7.vgtest wrap7.stdout.exp \
 	wrap8.vgtest wrap8.stdout.exp wrap8.stderr.exp \
 	wrap8.stdout.exp-ppc64 wrap8.stderr.exp-ppc64 \
-	wrapmalloc.vgtest wrapmalloc.stdout.exp wrapmalloc.stderr.exp \
+	wrapmalloc.vgtest wrapmalloc.stdout.exp \
 	wrapmallocstatic.vgtest wrapmallocstatic.stdout.exp \
-	wrapmallocstatic.stderr.exp \
 	writev1.stderr.exp writev1.stderr.exp-solaris writev1.vgtest \
-	xml1.stderr.exp xml1.stdout.exp xml1.vgtest xml1.stderr.exp-s390x-mvc \
-	leak_cpp_interior.stderr.exp-freebsd leak_cpp_interior.stderr.exp-freebsd-32bit
+	xml1.stderr.exp xml1.stdout.exp xml1.vgtest xml1.stderr.exp-s390x-mvc
 
 check_PROGRAMS = \
 	accounting \
@@ -453,11 +486,12 @@ check_PROGRAMS = \
 	badpoll \
 	badrw \
 	big_blocks_freed_list \
-	brk2 \
 	buflen_check \
 	bug155125 \
 	bug287260 \
 	bug340392 \
+	bug401284 \
+	bug445235_ada_demangle \
 	bug464969_d_demangle \
 	bug472219 \
 	calloc-overflow \
@@ -491,11 +525,13 @@ check_PROGRAMS = \
 	leak-segv-jmp \
 	long-supps \
 	mallinfo \
+	mallinfo2 \
 	malloc_free_fill \
 	malloc_usable malloc1 malloc2 malloc3 manuel1 manuel2 manuel3 \
 	match-overrun \
 	memalign_test  memcmptest mempool mempool2 mmaptest \
 	memalign_args \
+	memccpy1 memccpy2 \
 	memmem \
 	mismatches new_override metadata \
 	nanoleak_supp nanoleak2 new_nothrow \
@@ -531,6 +567,7 @@ check_PROGRAMS = \
 	varinforestrict \
 	vcpu_fbench vcpu_fnfns \
 	wcs \
+	wcscat \
 	xml1 \
 	wmemcmp \
 	wrap1 wrap2 wrap3 wrap4 wrap5 wrap6 wrap7 wrap7so.so wrap8 \
@@ -543,11 +580,17 @@ check_PROGRAMS += long_namespace_xml
 endif
 
 if DWARF4
+if HAVE_SBRK
 check_PROGRAMS += dw4
+endif
 endif
 
 bug464969_d_demangle_SOURCES = bug464969_d_demangle.cpp
 bug464969_d_demangle_CXXFLAGS = $(AM_CXXFLAGS) @FLAG_W_NO_UNINITIALIZED@
+
+if HAVE_WCSXFRM
+check_PROGRAMS += bug484002
+endif
 
 if GZ_ZLIB
 check_PROGRAMS += cdebug_zlib
@@ -561,21 +604,44 @@ cdebug_zlib_gnu_SOURCES = cdebug.c
 cdebug_zlib_gnu_CFLAGS = $(AM_CFLAGS) -g -gz=zlib-gnu @FLAG_W_NO_UNINITIALIZED@
 endif
 
+if GZ_ZSTD
+check_PROGRAMS += cdebug_zstd
+cdebug_zstd_SOURCES = cdebug.c
+cdebug_zstd_CFLAGS = $(AM_CFLAGS) -g -gz=zstd @FLAG_W_NO_UNINITIALIZED@
+endif
+
+if HAVE_SBRK
+check_PROGRAMS += brk2
+endif
+
 if HAVE_ALIGNED_CXX_ALLOC
 check_PROGRAMS += cxx17_aligned_new sized_aligned_new_delete_args \
+	duplicate_align_size_errors \
 	new_aligned_delete_default \
 	sized_aligned_new_delete_misaligned1 \
 	sized_aligned_new_delete_misaligned2 \
 	sized_aligned_new_delete_misaligned3
 endif
 
+if HAVE_CLOSE_RANGE
+check_PROGRAMS += close_range
+endif
+
+close_range_CFLAGS = ${AM_CFLAGS} @FLAG_W_NO_UNUSED_BUT_SET_VARIABLE@ \
+		     @FLAG_W_NO_UNINITIALIZED@
+
 if HAVE_PTHREAD_BARRIER
 check_PROGRAMS += reach_thread_register
 endif
 
 if HAVE_FSIZED_DEALLOCATION
-check_PROGRAMS += sized_delete new_delete_mismatch_size
+check_PROGRAMS += sized_delete
 endif
+
+if HAVE_ALIGN_VAL_T
+check_PROGRAMS += new_delete_mismatch_size
+endif
+
 
 if HAVE_GNU_STPNCPY
 check_PROGRAMS += stpncpy
@@ -583,6 +649,10 @@ endif
 
 if HAVE_PTHREAD_SETNAME_NP
 check_PROGRAMS += threadname 
+endif
+
+if HAVE_WCPNCPY
+check_PROGRAMS += wcpncpy1
 endif
 
 # are there still pre-C99 C compilers?
@@ -616,13 +686,24 @@ leak_cpp_interior_SOURCES	= leak_cpp_interior.cpp
 
 # Suppress various gcc warnings which are correct, but for things
 # we are actually testing for at runtime.
-accounting_CFLAGS	= $(AM_CFLAGS) @FLAG_W_NO_ALLOC_SIZE_LARGER_THAN@
+accounting_CFLAGS	= $(AM_CFLAGS) @FLAG_W_ALLOC_SIZE_LARGER_THAN@
 badfree_CFLAGS		= $(AM_CFLAGS) @FLAG_W_NO_FREE_NONHEAP_OBJECT@
-bug155125_CFLAGS	= $(AM_CFLAGS) -Wno-unused-result @FLAG_W_NO_ALLOC_SIZE_LARGER_THAN@
+brk2_CFLAGS		= ${AM_CFLAGS} @FLAG_W_NO_DEPRECATED_DECLARATIONS@
+bug155125_CFLAGS	= $(AM_CFLAGS) @FLAG_W_NO_UNUSED_RESULT@ @FLAG_W_ALLOC_SIZE_LARGER_THAN@
 bug472219_CFLAGS	= $(AM_CFLAGS) @FLAG_W_NO_UNINITIALIZED@
-mallinfo_CFLAGS		= $(AM_CFLAGS) -Wno-deprecated-declarations
-malloc3_CFLAGS		= $(AM_CFLAGS) @FLAG_W_NO_ALLOC_SIZE_LARGER_THAN@
-sbfragment_CFLAGS	= $(AM_CFLAGS) -Wno-deprecated-declarations
+calloc_overflow_CFLAGS	= ${AM_CFLAGS} @FLAG_W_ALLOC_SIZE_LARGER_THAN@
+malloc_usable_CFLAGS	= ${AM_CFLAGS} @FLAG_W_NO_MAYBE_UNINITIALIZED@ @FLAG_W_NO_UNINITIALIZED@
+mallinfo_CFLAGS		= $(AM_CFLAGS) @FLAG_W_NO_DEPRECATED_DECLARATIONS@
+if VGCONF_OS_IS_SOLARIS
+mallinfo_LDADD = -lmalloc
+endif
+mallinfo2_CFLAGS	= $(AM_CFLAGS) @FLAG_W_NO_DEPRECATED_DECLARATIONS@
+malloc3_CFLAGS		= $(AM_CFLAGS) @FLAG_W_ALLOC_SIZE_LARGER_THAN@ @FLAG_W_NO_ALLOC_SIZE@
+sbfragment_CFLAGS	= $(AM_CFLAGS) @FLAG_W_NO_DEPRECATED_DECLARATIONS@
+if VGCONF_OS_IS_SOLARIS
+sbfragment_LDADD = -lmalloc
+endif
+
 strchr_CFLAGS		= $(AM_CFLAGS) @FLAG_W_NO_UNINITIALIZED@
 
 big_debuginfo_symbol_SOURCES = big_debuginfo_symbol.cpp
@@ -632,7 +713,9 @@ bug340392_CFLAGS        = $(AM_CFLAGS) -O3 @FLAG_W_NO_MAYBE_UNINITIALIZED@
 
 if HAVE_ALIGNED_CXX_ALLOC
 cxx17_aligned_new_SOURCES  = cxx17_aligned_new.cpp
-cxx17_aligned_new_CXXFLAGS = -std=c++17 @FLAG_W_NO_MISMATCHED_NEW_DELETE@
+cxx17_aligned_new_CXXFLAGS = ${AM_CXXFLAGS} -std=c++17 @FLAG_W_NO_MISMATCHED_NEW_DELETE@
+duplicate_align_size_errors_SOURCES = duplicate_align_size_errors.cpp
+duplicate_align_size_errors_CXXFLAGS = ${AM_CXXFLAGS} -std=c++17
 new_aligned_delete_default_SOURCES = new_aligned_delete_default.cpp
 new_aligned_delete_default_CXXFLAGS = ${AM_CXXFLAGS} -std=c++17
 sized_aligned_new_delete_args_SOURCES = sized_aligned_new_delete_args.cpp
@@ -645,6 +728,7 @@ sized_aligned_new_delete_misaligned3_SOURCES = sized_aligned_new_delete_misalign
 sized_aligned_new_delete_misaligned3_CXXFLAGS = ${AM_CXXFLAGS} -std=c++17 @FLAG_W_NO_UNUSED_VARIABLE@
 if COMPILER_IS_CLANG
 cxx17_aligned_new_CXXFLAGS += -fsized-deallocation
+duplicate_align_size_errors_CXXFLAGS += -fsized-deallocation
 sized_aligned_new_delete_args_CXXFLAGS += -fsized-deallocation
 sized_aligned_new_delete_misaligned1_CXXFLAGS += -fsized-deallocation
 sized_aligned_new_delete_misaligned2_CXXFLAGS += -fsized-deallocation
@@ -655,7 +739,7 @@ endif
 demangle_SOURCES = demangle.cpp
 demangle_rust_SOURCES = demangle-rust.c
 demangle_rust_CFLAGS	= $(AM_CFLAGS) @FLAG_W_NO_USE_AFTER_FREE@
-dw4_CFLAGS		= $(AM_CFLAGS) -gdwarf-4 -fdebug-types-section
+dw4_CFLAGS		= $(AM_CFLAGS) -gdwarf-4 -fdebug-types-section @FLAG_W_NO_DEPRECATED_DECLARATIONS@
 
 descr_belowsp_LDADD     = -lpthread
 err_disable3_LDADD 	= -lpthread
@@ -687,9 +771,13 @@ malloc1_CFLAGS		= $(AM_CFLAGS) @FLAG_W_NO_USE_AFTER_FREE@
 manuel1_CFLAGS		= $(AM_CFLAGS) @FLAG_W_NO_UNINITIALIZED@
 manuel3_CFLAGS		= $(AM_CFLAGS) @FLAG_W_NO_UNINITIALIZED@
 
+memalign_args_CFLAGS	= $(AM_CFLAGS) -std=gnu11
 memalign2_CFLAGS	= $(AM_CFLAGS) @FLAG_W_NO_NON_POWER_OF_TWO_ALIGNMENT@
 if VGCONF_OS_IS_SOLARIS
 memalign2_CFLAGS	+= -D__EXTENSIONS__
+posix_memalign_CFLAGS	= ${AM_CFLAGS} -D__EXTENSIONS__
+else
+posix_memalign_CFLAGS	= ${AM_CFLAGS}
 endif
 
 memcmptest_CFLAGS	= $(AM_CFLAGS) -fno-builtin-memcmp
@@ -722,7 +810,13 @@ origin4_many_CFLAGS	= $(AM_CFLAGS) -O @FLAG_W_NO_USE_AFTER_FREE@ @FLAG_W_NO_UNIN
 
 # Apply -O so as to run in reasonable time.
 origin5_bz2_CFLAGS	= $(AM_CFLAGS) -O -Wno-inline
+if VGCONF_OS_IS_DARWIN
+origin5_bz2_CFLAGS		+= -fno-inline
+endif
 origin6_fp_CFLAGS	= $(AM_CFLAGS) -O
+if VGCONF_OS_IS_DARWIN
+origin6_fp_CFLAGS		+= -fno-inline
+endif
 
 # Don't allow GCC to inline memcpy() and strcpy(),
 # because then we can't intercept it
@@ -733,6 +827,7 @@ partial_load_CFLAGS	= $(AM_CFLAGS) @FLAG_W_NO_USE_AFTER_FREE@
 reach_thread_register_CFLAGS	= $(AM_CFLAGS) -O2
 reach_thread_register_LDADD	= -lpthread
 
+realloc3_CFLAGS = ${AM_CFLAGS} @FLAG_W_NO_ALLOC_SIZE@
 realloc_size_zero_CFLAGS	= $(AM_CFLAGS) @FLAG_W_NO_INCOMPATIBLE_POINTER_TYPES_DISCARDS_QUALIFIERS@
 realloc_size_zero_mismatch_SOURCES = realloc_size_zero_mismatch.cpp
 realloc_size_zero_mismatch_CXXFLAGS = $(AM_CXXFLAGS) @FLAG_W_NO_MISMATCHED_NEW_DELETE@
@@ -783,11 +878,27 @@ wrap6_CFLAGS		= $(AM_CFLAGS) -O2
 # To make it a bit more realistic, have some optimisation enabled
 # for the varinfo tests.  We still expect sane results.
 varinfo1_CFLAGS		= $(AM_CFLAGS) -O @FLAG_W_NO_MAYBE_UNINITIALIZED@
+if VGCONF_OS_IS_DARWIN
+varinfo1_CFLAGS		+= -fno-inline
+endif
 varinfo2_CFLAGS		= $(AM_CFLAGS) -O -Wno-shadow @FLAG_W_NO_MAYBE_UNINITIALIZED@
+if VGCONF_OS_IS_DARWIN
+varinfo2_CFLAGS         += -fno-inline
+endif
 varinfo3_CFLAGS		= $(AM_CFLAGS) -O @FLAG_W_NO_MAYBE_UNINITIALIZED@
+if VGCONF_OS_IS_DARWIN
+varinfo3_CFLAGS         += -fno-inline
+endif
 varinfo4_CFLAGS		= $(AM_CFLAGS) -O @FLAG_W_NO_MAYBE_UNINITIALIZED@
+if VGCONF_OS_IS_DARWIN
+varinfo4_CFLAGS         += -fno-inline
+endif
 varinfo5_CFLAGS		= $(AM_CFLAGS) -O
 varinfo6_CFLAGS		= $(AM_CFLAGS) -O @FLAG_W_NO_MAYBE_UNINITIALIZED@
+if VGCONF_OS_IS_DARWIN
+varinfo6_CFLAGS         += -fno-inline
+endif
+
 
 # Build shared object for varinfo5
 varinfo5_SOURCES        = varinfo5.c
@@ -802,7 +913,7 @@ else
 endif
 
 varinfo5so_so_SOURCES   = varinfo5so.c
-varinfo5so_so_CFLAGS    = $(AM_CFLAGS) -fpic -O -Wno-shadow @FLAG_W_NO_MAYBE_UNINITIALIZED@
+varinfo5so_so_CFLAGS    = $(AM_CFLAGS) -fpic -O -Wno-shadow -fno-optimize-sibling-calls @FLAG_W_NO_MAYBE_UNINITIALIZED@
 if VGCONF_OS_IS_DARWIN
  varinfo5so_so_LDFLAGS  = -fpic $(AM_FLAG_M3264_PRI) -dynamic \
 				-dynamiclib -all_load

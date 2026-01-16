@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -33,6 +33,9 @@
 
 #ifndef __VEX_MAIN_UTIL_H
 #define __VEX_MAIN_UTIL_H
+
+/* This should be the only <...> include in the entire VEX library. */
+#include <stdarg.h>
 
 #include "libvex_basictypes.h"
 
@@ -92,12 +95,26 @@ extern UInt vex_printf ( const HChar *format, ... );
 __attribute__ ((format (printf, 2, 3)))
 extern UInt vex_sprintf ( HChar* buf, const HChar *format, ... );
 
+__attribute__ ((format (printf, 2, 0)))
+extern UInt vex_vsprintf ( HChar* buf, const HChar* format, va_list vargs );
+
 
 /* String ops */
 
 extern Bool vex_streq ( const HChar* s1, const HChar* s2 );
 extern SizeT vex_strlen ( const HChar* str );
 extern void vex_bzero ( void* s, SizeT n );
+
+
+/* Math ops */
+
+/* Sign extend an N-bit value up to 64 bits, by copying bit N-1 into all higher
+   positions. */
+static inline ULong vex_sx_to_64( ULong x, UInt n )
+{
+   vassert(n >= 1 && n < 64);
+   return (ULong)((Long)(x << (64 - n)) >> (64 - n));
+}
 
 
 /* Storage management: clear the area, and allocate from it. */
@@ -184,8 +201,8 @@ static inline void* LibVEX_Alloc_inline ( SizeT nbytes )
 
 /* Misaligned memory access support. */
 
-extern UInt  read_misaligned_UInt_LE  ( void* addr );
-extern ULong read_misaligned_ULong_LE ( void* addr );
+extern UInt  read_misaligned_UInt_LE  ( const void* addr );
+extern ULong read_misaligned_ULong_LE ( const void* addr );
 
 extern void  write_misaligned_UInt_LE  ( void* addr, UInt  w );
 extern void  write_misaligned_ULong_LE ( void* addr, ULong w );

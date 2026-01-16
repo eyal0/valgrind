@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -247,11 +247,11 @@
 #else
 #  define  VG_Z_LIBC_SONAME  libcZdsoZa              // libc.so*
 #endif
-#elif defined(VGO_darwin) && (DARWIN_VERS <= DARWIN_10_6)
-#  define  VG_Z_LIBC_SONAME  libSystemZdZaZddylib    // libSystem.*.dylib
+#elif defined(VGO_darwin)
 
-#elif defined(VGO_darwin) && (DARWIN_VERS == DARWIN_10_7 \
-                              || DARWIN_VERS == DARWIN_10_8)
+#if (DARWIN_VERS <= DARWIN_10_6)
+#  define  VG_Z_LIBC_SONAME  libSystemZdZaZddylib    // libSystem.*.dylib
+#elif (DARWIN_VERS == DARWIN_10_7 || DARWIN_VERS == DARWIN_10_8)
 #  define  VG_Z_LIBC_SONAME  libsystemZucZaZddylib   // libsystem_c*.dylib
    /* Note that the idea of a single name for the C library falls
       apart on more recent Darwins (10.8 and later) since the
@@ -260,13 +260,17 @@
       libsystem_platform.dylib.  This makes VG_Z_LIBC_SONAME somewhat useless
       at least inside vg_replace_strmem.c, and that hardwires some dylib
       names directly, for OSX 10.9. */
-
-#elif defined(VGO_darwin) && (DARWIN_VERS >= DARWIN_10_9)
+#elif (DARWIN_VERS >= DARWIN_10_9)
 #  define  VG_Z_LIBC_SONAME  libsystemZumallocZddylib  // libsystem_malloc.dylib
+#endif
+
+/* Not tested on systems older than OSX 10.13 */
+#define VG_Z_LIBSYSTEM_C_SONAME libsystemZucZddylib
+#define VG_Z_LIBSYSTEM_PLATFORM_SONAME libsystemZuplatformZddylib
+#define VG_Z_LIBSYSTEM_KERNEL_SONAME libsystemZukernelZddylib
 
 #else
 #  error "Unknown platform"
-
 #endif
 
 /* --- Sonames of the GNU C++ library. --- */
@@ -286,7 +290,8 @@
 #elif defined(VGO_freebsd)
 #  define  VG_Z_LIBPTHREAD_SONAME  libthrZdsoZa          // libthr.so*
 #elif defined(VGO_darwin)
-#  define  VG_Z_LIBPTHREAD_SONAME  libSystemZdZaZddylib  // libSystem.*.dylib
+//#  define  VG_Z_LIBPTHREAD_SONAME  libSystemZdZaZddylib  // libSystem.*.dylib
+#  define  VG_Z_LIBPTHREAD_SONAME  libsystemZupthreadZddylib  // libSystem.*.dylib
 #elif defined(VGO_solaris)
 #  define  VG_Z_LIBPTHREAD_SONAME  libpthreadZdsoZd1     // libpthread.so.1
 #else
@@ -320,6 +325,8 @@
 #define  VG_U_LD_LINUX_ARMHF_SO_3   "ld-linux-armhf.so.3"
 
 #define  VG_U_LD_LINUX_MIPSN8_S0_1  "ld-linux-mipsn8.so.1"
+
+#define  VG_U_LD_LINUX_RISCV64_SO_1 "ld-linux-riscv64-lp64d.so.1"
 
 #endif
 

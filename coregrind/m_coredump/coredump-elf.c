@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -277,7 +277,7 @@ static void fill_prstatus(const ThreadState *tst,
    prs->pr_sid = VG_(getpgrp)();
 #endif
    
-#if defined(VGP_s390x_linux)
+#if defined(VGP_s390x_linux) || defined(VGP_riscv64_linux)
    /* prs->pr_reg has struct type. Need to take address. */
    regs = (struct vki_user_regs_struct *)&(prs->pr_reg);
 #elif defined(VGP_mips32_linux) || defined(VGP_mips64_linux) \
@@ -489,6 +489,39 @@ static void fill_prstatus(const ThreadState *tst,
    regs[VKI_MIPS32_EF_CP0_STATUS] = arch->vex.guest_CP0_status;
    regs[VKI_MIPS32_EF_CP0_EPC]    = arch->vex.guest_PC;
 #  undef DO
+#elif defined(VGP_riscv64_linux)
+   regs->pc = arch->vex.guest_pc;
+   regs->ra = arch->vex.guest_x1;
+   regs->sp = arch->vex.guest_x2;
+   regs->gp = arch->vex.guest_x3;
+   regs->tp = arch->vex.guest_x4;
+   regs->t0 = arch->vex.guest_x5;
+   regs->t1 = arch->vex.guest_x6;
+   regs->t2 = arch->vex.guest_x7;
+   regs->s0 = arch->vex.guest_x8;
+   regs->s1 = arch->vex.guest_x9;
+   regs->a0 = arch->vex.guest_x10;
+   regs->a1 = arch->vex.guest_x11;
+   regs->a2 = arch->vex.guest_x12;
+   regs->a3 = arch->vex.guest_x13;
+   regs->a4 = arch->vex.guest_x14;
+   regs->a5 = arch->vex.guest_x15;
+   regs->a6 = arch->vex.guest_x16;
+   regs->a7 = arch->vex.guest_x17;
+   regs->s2 = arch->vex.guest_x18;
+   regs->s3 = arch->vex.guest_x19;
+   regs->s4 = arch->vex.guest_x20;
+   regs->s5 = arch->vex.guest_x21;
+   regs->s6 = arch->vex.guest_x22;
+   regs->s7 = arch->vex.guest_x23;
+   regs->s8 = arch->vex.guest_x24;
+   regs->s9 = arch->vex.guest_x25;
+   regs->s10 = arch->vex.guest_x26;
+   regs->s11 = arch->vex.guest_x27;
+   regs->t3 = arch->vex.guest_x28;
+   regs->t4 = arch->vex.guest_x29;
+   regs->t5 = arch->vex.guest_x30;
+   regs->t6 = arch->vex.guest_x31;
 #elif defined(VGP_amd64_freebsd)
    regs->rflags = LibVEX_GuestAMD64_get_rflags( &arch->vex );
    regs->rsp    = arch->vex.guest_RSP;
@@ -527,6 +560,43 @@ static void fill_prstatus(const ThreadState *tst,
    regs->es     = arch->vex.guest_ES;
    regs->fs     = arch->vex.guest_FS;
    regs->gs     = arch->vex.guest_GS;
+
+#elif defined(VGP_arm64_freebsd)
+   regs->gp_x[0]  = arch->vex.guest_X0;
+   regs->gp_x[1]  = arch->vex.guest_X1;
+   regs->gp_x[2]  = arch->vex.guest_X2;
+   regs->gp_x[3]  = arch->vex.guest_X3;
+   regs->gp_x[4]  = arch->vex.guest_X4;
+   regs->gp_x[5]  = arch->vex.guest_X5;
+   regs->gp_x[6]  = arch->vex.guest_X6;
+   regs->gp_x[7]  = arch->vex.guest_X7;
+   regs->gp_x[8]  = arch->vex.guest_X8;
+   regs->gp_x[9]  = arch->vex.guest_X9;
+   regs->gp_x[10] = arch->vex.guest_X10;
+   regs->gp_x[11] = arch->vex.guest_X11;
+   regs->gp_x[12] = arch->vex.guest_X12;
+   regs->gp_x[13] = arch->vex.guest_X13;
+   regs->gp_x[14] = arch->vex.guest_X14;
+   regs->gp_x[15] = arch->vex.guest_X15;
+   regs->gp_x[16] = arch->vex.guest_X16;
+   regs->gp_x[17] = arch->vex.guest_X17;
+   regs->gp_x[18] = arch->vex.guest_X18;
+   regs->gp_x[19] = arch->vex.guest_X19;
+   regs->gp_x[20] = arch->vex.guest_X20;
+   regs->gp_x[21] = arch->vex.guest_X21;
+   regs->gp_x[22] = arch->vex.guest_X22;
+   regs->gp_x[23] = arch->vex.guest_X23;
+   regs->gp_x[24] = arch->vex.guest_X24;
+   regs->gp_x[25] = arch->vex.guest_X25;
+   regs->gp_x[26] = arch->vex.guest_X26;
+   regs->gp_x[27] = arch->vex.guest_X27;
+   regs->gp_x[28] = arch->vex.guest_X28;
+   regs->gp_x[29] = arch->vex.guest_X29;
+   regs->gp_lr    = arch->vex.guest_X30;
+   regs->gp_sp    = arch->vex.guest_XSP;
+   regs->gp_elr   = arch->vex.guest_PC;
+   regs->gp_spsr  = LibVEX_GuestARM64_get_nzcv( &arch->vex ); /* is this correct? */
+
 
 #else
 #  error Unknown ELF platform
@@ -654,6 +724,41 @@ static void fill_fpu(const ThreadState *tst, vki_elf_fpregset_t *fpu)
 #  undef DO
 #elif defined(VGP_nanomips_linux)
 
+#elif defined(VGP_riscv64_linux)
+   fpu->d.f[0] = arch->vex.guest_f0;
+   fpu->d.f[1] = arch->vex.guest_f1;
+   fpu->d.f[2] = arch->vex.guest_f2;
+   fpu->d.f[3] = arch->vex.guest_f3;
+   fpu->d.f[4] = arch->vex.guest_f4;
+   fpu->d.f[5] = arch->vex.guest_f5;
+   fpu->d.f[6] = arch->vex.guest_f6;
+   fpu->d.f[7] = arch->vex.guest_f7;
+   fpu->d.f[8] = arch->vex.guest_f8;
+   fpu->d.f[9] = arch->vex.guest_f9;
+   fpu->d.f[10] = arch->vex.guest_f10;
+   fpu->d.f[11] = arch->vex.guest_f11;
+   fpu->d.f[12] = arch->vex.guest_f12;
+   fpu->d.f[13] = arch->vex.guest_f13;
+   fpu->d.f[14] = arch->vex.guest_f14;
+   fpu->d.f[15] = arch->vex.guest_f15;
+   fpu->d.f[16] = arch->vex.guest_f16;
+   fpu->d.f[17] = arch->vex.guest_f17;
+   fpu->d.f[18] = arch->vex.guest_f18;
+   fpu->d.f[19] = arch->vex.guest_f19;
+   fpu->d.f[20] = arch->vex.guest_f20;
+   fpu->d.f[21] = arch->vex.guest_f21;
+   fpu->d.f[22] = arch->vex.guest_f22;
+   fpu->d.f[23] = arch->vex.guest_f23;
+   fpu->d.f[24] = arch->vex.guest_f24;
+   fpu->d.f[25] = arch->vex.guest_f25;
+   fpu->d.f[26] = arch->vex.guest_f26;
+   fpu->d.f[27] = arch->vex.guest_f27;
+   fpu->d.f[28] = arch->vex.guest_f28;
+   fpu->d.f[29] = arch->vex.guest_f29;
+   fpu->d.f[30] = arch->vex.guest_f30;
+   fpu->d.f[31] = arch->vex.guest_f31;
+   fpu->d.fcsr = arch->vex.guest_fcsr;
+
 #elif defined(VGP_x86_freebsd)
 
 #elif defined(VGP_amd64_freebsd)
@@ -663,6 +768,42 @@ static void fill_fpu(const ThreadState *tst, vki_elf_fpregset_t *fpu)
    DO(0);  DO(1);  DO(2);  DO(3);  DO(4);  DO(5);  DO(6);  DO(7);
    DO(8);  DO(9);  DO(10); DO(11); DO(12); DO(13); DO(14); DO(15);
 #  undef DO
+
+#elif defined(VGP_arm64_freebsd)
+   fpu->fp_q[0]  = *(const __uint128_t*)arch->vex.guest_Q0;
+   fpu->fp_q[1]  = *(const __uint128_t*)arch->vex.guest_Q1;
+   fpu->fp_q[2]  = *(const __uint128_t*)arch->vex.guest_Q2;
+   fpu->fp_q[3]  = *(const __uint128_t*)arch->vex.guest_Q3;
+   fpu->fp_q[4]  = *(const __uint128_t*)arch->vex.guest_Q4;
+   fpu->fp_q[5]  = *(const __uint128_t*)arch->vex.guest_Q5;
+   fpu->fp_q[6]  = *(const __uint128_t*)arch->vex.guest_Q6;
+   fpu->fp_q[7]  = *(const __uint128_t*)arch->vex.guest_Q7;
+   fpu->fp_q[8]  = *(const __uint128_t*)arch->vex.guest_Q8;
+   fpu->fp_q[9]  = *(const __uint128_t*)arch->vex.guest_Q9;
+   fpu->fp_q[10] = *(const __uint128_t*)arch->vex.guest_Q10;
+   fpu->fp_q[11] = *(const __uint128_t*)arch->vex.guest_Q11;
+   fpu->fp_q[12] = *(const __uint128_t*)arch->vex.guest_Q12;
+   fpu->fp_q[13] = *(const __uint128_t*)arch->vex.guest_Q13;
+   fpu->fp_q[14] = *(const __uint128_t*)arch->vex.guest_Q14;
+   fpu->fp_q[15] = *(const __uint128_t*)arch->vex.guest_Q15;
+   fpu->fp_q[16] = *(const __uint128_t*)arch->vex.guest_Q16;
+   fpu->fp_q[17] = *(const __uint128_t*)arch->vex.guest_Q17;
+   fpu->fp_q[18] = *(const __uint128_t*)arch->vex.guest_Q18;
+   fpu->fp_q[19] = *(const __uint128_t*)arch->vex.guest_Q19;
+   fpu->fp_q[20] = *(const __uint128_t*)arch->vex.guest_Q20;
+   fpu->fp_q[21] = *(const __uint128_t*)arch->vex.guest_Q21;
+   fpu->fp_q[22] = *(const __uint128_t*)arch->vex.guest_Q22;
+   fpu->fp_q[23] = *(const __uint128_t*)arch->vex.guest_Q23;
+   fpu->fp_q[24] = *(const __uint128_t*)arch->vex.guest_Q24;
+   fpu->fp_q[25] = *(const __uint128_t*)arch->vex.guest_Q25;
+   fpu->fp_q[26] = *(const __uint128_t*)arch->vex.guest_Q26;
+   fpu->fp_q[27] = *(const __uint128_t*)arch->vex.guest_Q27;
+   fpu->fp_q[28] = *(const __uint128_t*)arch->vex.guest_Q28;
+   fpu->fp_q[29] = *(const __uint128_t*)arch->vex.guest_Q29;
+   fpu->fp_q[30] = *(const __uint128_t*)arch->vex.guest_Q30;
+   fpu->fp_q[31] = *(const __uint128_t*)arch->vex.guest_Q31;
+   fpu->fp_sr     = *(const vki_uint32_t*)arch->vex.guest_QCFLAG;
+   fpu->fp_cr     = arch->vex.guest_FPCR;
 
 #else
 #  error Unknown ELF platform

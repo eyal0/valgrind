@@ -13,7 +13,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -498,12 +498,11 @@ Bool HG_(saneWS_SLOW) ( WordSetU* wsu, WordSet ws )
    WordVec* wv;
    UWord    i;
    if (wsu == NULL) return False;
-   if (ws < 0 || ws >= wsu->ix2vec_used)
+   if (ws >= wsu->ix2vec_used)
       return False;
    wv = do_ix2vec( wsu, ws );
    /* can never happen .. do_ix2vec will assert instead.  Oh well. */
    if (wv->owner != wsu) return False;
-   if (wv->size < 0) return False;
    if (wv->size > 0) {
       for (i = 0; i < wv->size-1; i++) {
          if (wv->words[i] >= wv->words[i+1])

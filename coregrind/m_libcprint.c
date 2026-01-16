@@ -13,7 +13,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -151,7 +151,7 @@ void VG_(print_preamble)(Bool logging_to_fd)
       VG_(printf_xml)("\n");
       VG_(printf_xml)("<valgrindoutput>\n");
       VG_(printf_xml)("\n");
-      VG_(printf_xml)("<protocolversion>4</protocolversion>\n");
+      VG_(printf_xml)("<protocolversion>6</protocolversion>\n");
       VG_(printf_xml)("<protocoltool>%s</protocoltool>\n", VG_(clo_toolname));
       VG_(printf_xml)("\n");
    }
@@ -421,6 +421,12 @@ static void finalize_sink_fd(OutputSink *sink, Int new_fd, Bool is_xml)
    } else {
       VG_(fcntl)(safe_fd, VKI_F_SETFD, VKI_FD_CLOEXEC);
       sink->fd = safe_fd;
+      /* If we created the new_fd (VgLogTo_File or VgLogTo_Socket), then we
+         don't need the original file descriptor open anymore. We only need
+         to keep it open if it was an existing fd given by the user (or
+         stderr).  */
+      if (sink->type != VgLogTo_Fd)
+         VG_(close)(new_fd);
    }
 }
 

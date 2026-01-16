@@ -8,7 +8,7 @@
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
+   the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
 
    This program is distributed in the hope that it will be useful,
@@ -483,6 +483,10 @@ enum target_signal target_signal_from_host (int hostsig)
          return (enum target_signal)
             (hostsig - 33 + (int) TARGET_SIGNAL_REALTIME_33);
       else if (hostsig == 32)
+         // depending on the platform the first two and the third
+         // if branches here may be mutually exclusive, ignore any
+         // coverity warnings
+         // coverity[DEADCODE:FALSE]
          return TARGET_SIGNAL_REALTIME_32;
       else if (64 <= hostsig && hostsig <= 127)
          return (enum target_signal)

@@ -17,7 +17,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -39,7 +39,7 @@
 #include "host_generic_regs.h"
 #include "host_arm_defs.h"
 
-UInt arm_hwcaps = 0;
+static UInt arm_hwcaps;
 
 
 /* --------- Registers. --------- */
@@ -3069,7 +3069,7 @@ static UInt* do_load_or_store32 ( UInt* p,
 
 Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
                     UChar* buf, Int nbuf, const ARMInstr* i, 
-                    Bool mode64, VexEndness endness_host,
+                    Bool mode64, const VexArchInfo* archinfo_host,
                     const void* disp_cp_chain_me_to_slowEP,
                     const void* disp_cp_chain_me_to_fastEP,
                     const void* disp_cp_xindir,
@@ -3079,6 +3079,8 @@ Int emit_ARMInstr ( /*MB_MOD*/Bool* is_profInc,
    vassert(nbuf >= 32);
    vassert(mode64 == False);
    vassert(0 == (((HWord)buf) & 3));
+
+   arm_hwcaps = archinfo_host->hwcaps;
 
    switch (i->tag) {
       case ARMin_Alu: {

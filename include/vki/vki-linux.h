@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -97,6 +97,8 @@
 #  include "vki-posixtypes-mips64-linux.h"
 #elif defined(VGA_nanomips)
 #  include "vki-posixtypes-nanomips-linux.h"
+#elif defined(VGA_riscv64)
+#  include "vki-posixtypes-riscv64-linux.h"
 #else
 #  error Unknown platform
 #endif
@@ -170,6 +172,25 @@ typedef int __vki_kernel_key_t;
 typedef int __vki_kernel_mqd_t;
 
 //----------------------------------------------------------------------
+// From pre-git history /include/linux/types.h
+//----------------------------------------------------------------------
+
+struct vki_ustat {
+#if defined(VGA_mips32) || defined(VGA_mips64) || defined(VGA_nanomips)
+	long			f_tfree;
+#else
+	int			f_tfree;
+#endif
+#if defined(VGA_s390x)
+	unsigned int		f_tinode;
+#else
+	unsigned long		f_tinode;
+#endif
+	char			f_fname[6];
+	char			f_fpack[6];
+};
+
+//----------------------------------------------------------------------
 // From linux-2.6.8.1/include/linux/types.h
 //----------------------------------------------------------------------
 
@@ -225,6 +246,8 @@ typedef unsigned int	        vki_uint;
 #  include "vki-mips64-linux.h"
 #elif defined(VGA_nanomips)
 #  include "vki-nanomips-linux.h"
+#elif defined(VGA_riscv64)
+#  include "vki-riscv64-linux.h"
 #else
 #  error Unknown platform
 #endif
@@ -1342,6 +1365,13 @@ struct  vki_seminfo {
 #define VKI_MREMAP_FIXED	2
 
 //----------------------------------------------------------------------
+// Common madvise flags mman-common.h
+//----------------------------------------------------------------------
+
+#define VKI_MADV_GUARD_INSTALL 102
+#define VKI_MADV_GUARD_REMOVE  103
+
+//----------------------------------------------------------------------
 // From linux-2.6.31-rc4/include/linux/futex.h
 //----------------------------------------------------------------------
 
@@ -1390,6 +1420,19 @@ struct vki_robust_list_head {
 	 * so only truly owned locks will be handled.
 	 */
 	struct vki_robust_list __user *list_op_pending;
+};
+
+/* Introduced in linux commit bf69bad38cf63d980e8a603f8d1bd1f85b5ed3d9 */
+struct vki_futex_waitv {
+	__vki_u64 val;
+	__vki_u64 uaddr;
+	__vki_u32 flags;
+	__vki_u32 __reserved;
+};
+
+struct vki__kernel_timespec {
+	long long tv_sec;
+	long long tv_nsec;
 };
 
 //----------------------------------------------------------------------
@@ -1472,7 +1515,12 @@ struct vki_statx {
         __vki_u32   stx_dev_major;  /* ID of device containing file [uncond] */
         __vki_u32   stx_dev_minor;
         /* 0x90 */
-        __vki_u64   __spare2[14];   /* Spare space for future expansion */
+        __vki_u64   stx_mnt_id;
+        __vki_u32   stx_dio_mem_align;      /* Memory buffer alignment for direct I/O */
+        __vki_u32   stx_dio_offset_align;   /* File offset alignment for direct I/O */
+        /* 0xa0 */
+
+        __vki_u64   __spare2[12];   /* Spare space for future expansion */
         /* 0x100 */
 };
 
@@ -1505,6 +1553,7 @@ struct vki_dirent64 {
 #define VKI_F_SETLEASE      (VKI_F_LINUX_SPECIFIC_BASE + 0)
 #define VKI_F_GETLEASE      (VKI_F_LINUX_SPECIFIC_BASE + 1)
 
+#define VKI_F_CREATED_QUERY (VKI_F_LINUX_SPECIFIC_BASE + 4)
 #define VKI_F_CANCELLK      (VKI_F_LINUX_SPECIFIC_BASE + 5)
 
 #define VKI_F_DUPFD_CLOEXEC (VKI_F_LINUX_SPECIFIC_BASE + 6)
@@ -3194,6 +3243,8 @@ struct vki_perf_event_attr {
 #define VKI_PERF_EVENT_IOC_ID           _VKI_IOR('$', 7, __vki_u64 *)
 #define VKI_PERF_EVENT_IOC_SET_BPF      _VKI_IOW('$', 8, __vki_u32)
 
+#define VKI_PERF_FLAG_FD_NO_GROUP       (1UL << 0)
+
 /*--------------------------------------------------------------------*/
 // From linux-2.6.32.4/include/linux/getcpu.h
 /*--------------------------------------------------------------------*/
@@ -3220,6 +3271,9 @@ struct vki_getcpu_cache {
 #define VKI_EVIOCGSW(len)	_VKI_IOC(_VKI_IOC_READ, 'E', 0x1b, len)		/* get all switch states */
 
 #define VKI_EVIOCGBIT(ev,len)	_VKI_IOC(_VKI_IOC_READ, 'E', 0x20 + ev, len)	/* get event bits */
+
+#define VKI_EVIOCGRAB		_VKI_IOW('E', 0x90, int)
+/* grab device */
 
 /*
  * Event types
@@ -3853,30 +3907,62 @@ struct vki_ion_custom_data {
 #define VKI_ION_IOC_CUSTOM \
    _VKI_IOWR(VKI_ION_IOC_MAGIC, 6, struct vki_ion_custom_data)
 
+struct vki_procmap_query {
+    __vki_u64 size;
+    __vki_u64 query_flags;              /* in */
+    __vki_u64 query_addr;               /* in */
+    __vki_u64 vma_start;                /* out */
+    __vki_u64 vma_end;                  /* out */
+    __vki_u64 vma_flags;                /* out */
+    __vki_u64 vma_page_size;            /* out */
+    __vki_u64 vma_offset;               /* out */
+    __vki_u64 inode;                    /* out */
+    __vki_u32 dev_major;                /* out */
+    __vki_u32 dev_minor;                /* out */
+    __vki_u32 vma_name_size;            /* in/out */
+    __vki_u32 build_id_size;            /* in/out */
+    __vki_u64 vma_name_addr;            /* in */
+    __vki_u64 build_id_addr;            /* in */
+};
+
+// linux/fs.h
+#define VKI_PROCFS_IOCTL_MAGIC 'f'
+
+#define VKI_PROCMAP_QUERY \
+   _VKI_IOWR(VKI_PROCFS_IOCTL_MAGIC, 17, struct vki_procmap_query)
+
 //----------------------------------------------------------------------
-// From linux-3.19-rc5/drivers/staging/android/uapi/sync.h
+// From include/uapi/linux/sync_file.h 6.10.3
 //----------------------------------------------------------------------
 
 struct vki_sync_merge_data {
-        __vki_s32 fd2;
         char      name[32];
+        __vki_s32 fd2;
         __vki_s32 fence;
+        __vki_u32 flags;
+	__vki_u32 pad;
 };
 
-struct vki_sync_pt_info {
-        __vki_u32 len;
+struct vki_sync_fence_info {
         char      obj_name[32];
         char      driver_name[32];
         __vki_s32 status;
-        __vki_u64 timestamp_ns;
-        __vki_u8  driver_data[0];
+        __vki_u32 flags;
+	__vki_u64 timestamp_ns;
 };
 
-struct vki_sync_fence_info_data {
-        __vki_u32 len;
+struct vki_sync_file_info {
         char      name[32];
         __vki_s32 status;
-        __vki_u8  pt_info[0];
+        __vki_u32 flags;
+        __vki_u32 num_fences;
+        __vki_u32 pad;
+	__vki_u64 sync_fence_info;
+};
+
+struct vki_sync_set_deadline {
+	__vki_u64 deadline_ns;
+	__vki_u64 pad;
 };
 
 #define VKI_SYNC_IOC_MAGIC   '>'
@@ -3885,10 +3971,13 @@ struct vki_sync_fence_info_data {
    _VKI_IOW(VKI_SYNC_IOC_MAGIC, 0, __vki_s32)
 
 #define VKI_SYNC_IOC_MERGE \
-   _VKI_IOWR(VKI_SYNC_IOC_MAGIC, 1, struct vki_sync_merge_data)
+   _VKI_IOWR(VKI_SYNC_IOC_MAGIC, 3, struct vki_sync_merge_data)
 
-#define VKI_SYNC_IOC_FENCE_INFO \
-   _VKI_IOWR(VKI_SYNC_IOC_MAGIC, 2, struct vki_sync_fence_info_data)
+#define VKI_SYNC_IOC_FILE_INFO \
+   _VKI_IOWR(VKI_SYNC_IOC_MAGIC, 4, struct vki_sync_file_info)
+
+#define VKI_SYNC_IOC_SET_DEADLINE \
+   _VKI_IOW(VKI_SYNC_IOC_MAGIC, 5, struct vki_sync_set_deadline)
 
 //----------------------------------------------------------------------
 // From drivers/staging/lustre/lustre/include/lustre/lustre_user.h
@@ -5454,6 +5543,142 @@ struct vki_open_how {
 
 #define VKI_CLOSE_RANGE_UNSHARE (1U << 1)
 #define VKI_CLOSE_RANGE_CLOEXEC (1U << 2)
+
+struct vki_cachestat_range {
+    __vki_u64 off;
+    __vki_u64 len;
+};
+
+struct vki_cachestat {
+    __vki_u64 nr_cache;
+    __vki_u64 nr_dirty;
+    __vki_u64 nr_writeback;
+    __vki_u64 nr_evicted;
+    __vki_u64 nr_recently_evicted;
+};
+
+//----------------------------------------------------------------------
+// From linux/magic.h
+//----------------------------------------------------------------------
+
+#define VKI_BTRFS_SUPER_MAGIC    0x9123683E
+
+struct vki__aio_sigset {
+   const vki_sigset_t __user	*sigmask;
+   vki_size_t		sigsetsize;
+};
+
+//----------------------------------------------------------------------
+// From uapi/linux/mount.h
+//----------------------------------------------------------------------
+
+struct vki_mnt_id_req {
+   __vki_u32 size;
+   __vki_u32 spare;
+   __vki_u64 mnt_id;
+   __vki_u64 param;
+   __vki_u64 mnt_ns_id;
+};
+
+struct vki_statmount {
+	__vki_u32 size;		/* Total size, including strings */
+	__vki_u32 mnt_opts;		/* [str] Mount options of the mount */
+	__vki_u64 mask;		/* What results were written */
+	__vki_u32 sb_dev_major;	/* Device ID */
+	__vki_u32 sb_dev_minor;
+	__vki_u64 sb_magic;		/* ..._SUPER_MAGIC */
+	__vki_u32 sb_flags;		/* SB_{RDONLY,SYNCHRONOUS,DIRSYNC,LAZYTIME} */
+	__vki_u32 fs_type;		/* [str] Filesystem type */
+	__vki_u64 mnt_id;		/* Unique ID of mount */
+	__vki_u64 mnt_parent_id;	/* Unique ID of parent (for root == mnt_id) */
+	__vki_u32 mnt_id_old;	/* Reused IDs used in proc/.../mountinfo */
+	__vki_u32 mnt_parent_id_old;
+	__vki_u64 mnt_attr;		/* MOUNT_ATTR_... */
+	__vki_u64 mnt_propagation;	/* MS_{SHARED,SLAVE,PRIVATE,UNBINDABLE} */
+	__vki_u64 mnt_peer_group;	/* ID of shared peer group */
+	__vki_u64 mnt_master;	/* Mount receives propagation from this ID */
+	__vki_u64 propagate_from;	/* Propagation from in current namespace */
+	__vki_u32 mnt_root;		/* [str] Root of mount relative to root of fs */
+	__vki_u32 mnt_point;	/* [str] Mountpoint relative to current root */
+	__vki_u64 mnt_ns_id;	/* ID of the mount namespace */
+	__vki_u64 __spare2[49];
+	char str[];		/* Variable size part containing strings */
+};
+
+//----------------------------------------------------------------------
+// From uapi/linux/fs.h
+//----------------------------------------------------------------------
+
+struct vki_file_attr {
+	__vki_u64 fa_xflags;	/* xflags field value (get/set) */
+	__vki_u32 fa_extsize;	/* extsize field value (get/set)*/
+	__vki_u32 fa_nextents;	/* nextents field value (get)   */
+	__vki_u32 fa_projid;	/* project identifier (get/set) */
+	__vki_u32 fa_cowextsize;	/* CoW extsize field value (get/set) */
+};
+
+//----------------------------------------------------------------------
+// From uapi/linux/mount.h
+//----------------------------------------------------------------------
+
+#define VKI_SUBCMDMASK  0x00ff
+#define VKI_SUBCMDSHIFT 8
+
+#define VKI_Q_SYNC     0x800001	/* sync disk copy of a filesystems quotas */
+#define VKI_Q_QUOTAON  0x800002	/* turn quotas on */
+#define VKI_Q_QUOTAOFF 0x800003	/* turn quotas off */
+#define VKI_Q_GETFMT   0x800004	/* get quota format used on given filesystem */
+#define VKI_Q_GETINFO  0x800005	/* get information about quota files */
+#define VKI_Q_SETINFO  0x800006	/* set information about quota files */
+#define VKI_Q_GETQUOTA 0x800007	/* get user quota structure */
+#define VKI_Q_SETQUOTA 0x800008	/* set user quota structure */
+#define VKI_Q_GETNEXTQUOTA 0x800009	/* get disk limits and usage >= ID */
+
+struct vki_dqblk
+  {
+    __vki_u64 dqb_bhardlimit;	/* absolute limit on disk quota blocks alloc */
+    __vki_u64 dqb_bsoftlimit;	/* preferred limit on disk quota blocks */
+    __vki_u64 dqb_curspace;	/* current quota block count */
+    __vki_u64 dqb_ihardlimit;	/* maximum # allocated inodes */
+    __vki_u64 dqb_isoftlimit;	/* preferred inode limit */
+    __vki_u64 dqb_curinodes;	/* current # allocated inodes */
+    __vki_u64 dqb_btime;	/* time limit for excessive disk use */
+    __vki_u64 dqb_itime;	/* time limit for excessive files */
+    __vki_u32 dqb_valid;	/* bitmask of QIF_* constants */
+  };
+
+
+struct vki_nextdqblk {
+	__vki_u64 dqb_bhardlimit;
+	__vki_u64 dqb_bsoftlimit;
+	__vki_u64 dqb_curspace;
+	__vki_u64 dqb_ihardlimit;
+	__vki_u64 dqb_isoftlimit;
+	__vki_u64 dqb_curinodes;
+	__vki_u64 dqb_btime;
+	__vki_u64 dqb_itime;
+	__vki_u32 dqb_valid;
+	__vki_u32 dqb_id;
+};
+
+struct vki_dqinfo {
+	__vki_u64 dqi_bgrace;
+	__vki_u64 dqi_igrace;
+	__vki_u32 dqi_flags;	/* DFQ_* */
+	__vki_u32 dqi_valid;
+};
+
+//----------------------------------------------------------------------
+// From uapi/linux/lsm.h
+//----------------------------------------------------------------------
+
+struct vki_lsm_ctx {
+	__vki_u64 id;
+	__vki_u64 flags;
+	__vki_u64 len;
+	__vki_u64 ctx_len;
+	__vki_u8 ctx[]; /* __counted_by(ctx_len); */
+};
 
 /*--------------------------------------------------------------------*/
 /*--- end                                                          ---*/

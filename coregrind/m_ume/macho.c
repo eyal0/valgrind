@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -41,6 +41,7 @@
 #include "pub_core_machine.h"       // VG_ELF_CLASS (XXX: which should be moved)
 #include "pub_core_mallocfree.h"    // VG_(malloc), VG_(free)
 #include "pub_core_syscall.h"       // VG_(strerror)
+#include "pub_core_clientstate.h"
 #include "pub_core_ume.h"           // self
 
 #include "priv_ume.h"
@@ -73,6 +74,7 @@ typedef struct load_info_t {
   vki_uint8_t *linker_entry; // dylinker entry point
   Addr linker_offset; // dylinker text offset
   vki_size_t max_addr; // biggest address reached while loading segments
+  Addr text_slide; // slide of the text segment because of "ASLR" (arm64-only)
 } load_info_t;
 
 static void print(const HChar *str)
@@ -179,7 +181,7 @@ load_segment(int fd, vki_off_t offset, vki_off_t size,
    vki_size_t vmsize;   // page-aligned
    vki_size_t vmend;    // page-aligned
    unsigned int prot;
-   Addr slided_addr = segcmd->vmaddr + out_info->linker_offset;
+   Addr slided_addr = segcmd->vmaddr + out_info->linker_offset + out_info->text_slide;
 
    // GrP fixme mark __UNIXSTACK as SF_STACK
     
@@ -242,7 +244,7 @@ load_segment(int fd, vki_off_t offset, vki_off_t size,
    vmsize = VG_PGROUNDUP(segcmd->vmsize);
    if (filesize > 0) {
       addr = slided_addr;
-      VG_(debugLog)(2, "ume", "mmap fixed (file) (%#lx, %lu)\n", addr, filesize);
+      VG_(debugLog)(2, "ume", "mmap fixed (file) (%#lx, %lu, %x)\n", addr, filesize, prot);
       res = VG_(am_mmap_named_file_fixed_client)(addr, filesize, prot, fd, 
                                                  offset + segcmd->fileoff, 
                                                  filename);
@@ -259,7 +261,7 @@ load_segment(int fd, vki_off_t offset, vki_off_t size,
       // page-aligned part
       SizeT length = vmsize - filesize;
       addr = (Addr)(filesize + slided_addr);
-      VG_(debugLog)(2, "ume", "mmap fixed (anon) (%#lx, %lu)\n", addr, length);
+      VG_(debugLog)(2, "ume", "mmap fixed (anon) (%#lx, %lu, %u)\n", addr, length, prot);
       res = VG_(am_mmap_anon_fixed_client)(addr, length, prot);
       check_mmap(res, addr, length, "load_segment2");
    }
@@ -448,6 +450,7 @@ load_dylinker(struct dylinker_command *dycmd, load_info_t *out_info)
    linker_info.entry = NULL;
    linker_info.linker_entry = NULL;
    linker_info.linker_offset = 0;
+   linker_info.text_slide = 0;
    linker_info.max_addr = out_info->max_addr;
 
    if (dycmd->name.offset >= dycmd->cmdsize) {
@@ -815,7 +818,7 @@ Bool VG_(match_macho)(const void *hdr, SizeT len)
 
    // GrP fixme check more carefully for matching fat arch?
 
-   return (len >= VKI_PAGE_SIZE  &&  
+   return (len >= sizeof(*magic)  &&
            (*magic == MAGIC  ||  *magic == VG_(ntohl)(FAT_MAGIC))) 
       ? True : False;
 }
@@ -833,6 +836,7 @@ Int VG_(load_macho)(Int fd, const HChar *name, ExeInfo *info)
    load_info.linker_entry = NULL;
    load_info.linker_offset = 0;
    load_info.max_addr = 0;
+   load_info.text_slide = 0;
 
    err = VG_(fstat)(fd, &sb);
    if (err) {
@@ -855,7 +859,16 @@ Int VG_(load_macho)(Int fd, const HChar *name, ExeInfo *info)
    info->text = (Addr) load_info.text;
    info->dynamic = load_info.linker_entry ? True : False;
 
+   if (!info->dynamic && load_info.text_slide) {
+      print("cannot slide static executables\n");
+      return VKI_ENOEXEC;
+   }
+
    info->executable_path = VG_(strdup)("ume.macho.executable_path", name);
+
+   SysRes res = VG_(dup)(fd);
+   if (!sr_isError(res))
+      VG_(cl_exec_fd) = sr_Res(res);
 
    return 0;
 }

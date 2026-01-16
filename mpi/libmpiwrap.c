@@ -9,7 +9,7 @@
 
    Notice that the following BSD-style license applies to this one
    file (mpiwrap.c) only.  The rest of Valgrind is licensed under the
-   terms of the GNU General Public License, version 2, unless
+   terms of the GNU General Public License, version 3, unless
    otherwise indicated.  See the COPYING file in the source
    distribution for details.
 
@@ -291,6 +291,8 @@ static void showTy ( FILE* f, MPI_Datatype ty )
 #  endif
    else if (ty == MPI_LONG_LONG_INT)  fprintf(f,"LONG_LONG_INT");
 #  if defined(MPI_LONG_LONG)
+   // platform dependant? MPI_LONG_LONG and MPI_UNSIGNED_LONG_LONG can be the same
+   // coverity[DEADCODE:FALSE]
    else if (ty == MPI_LONG_LONG)      fprintf(f,"LONG_LONG");
 #  endif
 #  if defined(MPI_UNSIGNED_LONG_LONG)
@@ -869,9 +871,15 @@ void walk_type ( void(*f)(void*,long), char* base, MPI_Datatype ty )
    }
 
    /* normal exit */
-   if (ints)  free(ints);
-   if (addrs) free(addrs);
-   if (dtys)  free(dtys);
+   if (n_ints > 0) {
+      free(ints);
+   }
+   if (n_addrs > 0) {
+      free(addrs);
+   }
+   if (n_dtys) {
+      free(dtys);
+   }
    return;
 
   unhandled:

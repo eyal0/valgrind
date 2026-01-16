@@ -13,7 +13,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -336,7 +336,7 @@ Intel_cache_info(Int level, VexCacheInfo *ci)
                }
                break;
             default:
-               VG_(debugLog)(1, "cache", "warning: L%u cache ignored\n",
+               VG_(debugLog)(1, "cache", "warning: L%d cache ignored\n",
                              (info[0] & 0xe0) >> 5);
                break;
             }
@@ -539,10 +539,19 @@ get_cache_info(VexArchInfo *vai)
 #elif defined(VGA_arm) || defined(VGA_ppc32)    || \
    defined(VGA_ppc64be) || defined(VGA_ppc64le) || \
    defined(VGA_mips32) || defined(VGA_mips64) || \
-   defined(VGA_arm64) || defined(VGA_nanomips)
+   defined(VGA_arm64) || defined(VGA_nanomips) || \
+   defined(VGA_riscv64)
 static Bool
 get_cache_info(VexArchInfo *vai)
 {
+#if defined(VGA_arm64)
+   unsigned long val;
+   asm volatile("mrs %0, dczid_el0" : "=r" (val));
+   val &= 0xf;
+   // The ARM manual says that 4 bits are used but 9 is the maximum
+   vg_assert(val <= 9);
+   vai->arm64_cache_block_size = val;
+#endif
    vai->hwcache_info.icaches_maintain_coherence = False;
 
    return False;   // not yet
@@ -604,11 +613,6 @@ get_cache_info(VexArchInfo *vai)
    VexCacheInfo *ci = &vai->hwcache_info;
 
    ci->icaches_maintain_coherence = True;
-
-   if (! (vai->hwcaps & VEX_HWCAPS_S390X_GIE)) {
-      // ECAG is not available
-      return False;
-   }
 
    UInt level, cache_kind, info, i;
    ULong topology = ecag(0, 0, 0);   // get summary

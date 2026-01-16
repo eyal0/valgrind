@@ -14,7 +14,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -174,10 +174,11 @@ static const char *select_platform(const char *clientname)
       } else if ((size_t)n_bytes >= sizeof(Elf64_Ehdr) && header[EI_CLASS] == ELFCLASS64) {
          const Elf64_Ehdr *ehdr = (Elf64_Ehdr *)header;
 
-         if (header[EI_DATA] == ELFDATA2LSB) {
-            if (ehdr->e_machine == EM_X86_64 &&
-                  ehdr->e_ident[EI_OSABI] == ELFOSABI_FREEBSD) {
+         if (header[EI_DATA] == ELFDATA2LSB && ehdr->e_ident[EI_OSABI] == ELFOSABI_FREEBSD) {
+            if (ehdr->e_machine == EM_X86_64) {
                platform = "amd64-freebsd";
+            } else if (ehdr->e_machine == EM_AARCH64) {
+               platform = "arm64-freebsd";
             }
          }
       }

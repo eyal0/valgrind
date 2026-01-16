@@ -5,7 +5,7 @@
 
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
-  published by the Free Software Foundation; either version 2 of the
+  published by the Free Software Foundation; either version 3 of the
   License, or (at your option) any later version.
 
   This program is distributed in the hope that it will be useful, but
@@ -53,6 +53,8 @@
 #define STACK_POINTER_OFFSET OFFSET_mips32_r29
 #elif defined(VGA_mips64)
 #define STACK_POINTER_OFFSET OFFSET_mips64_r29
+#elif defined(VGA_riscv64)
+#define STACK_POINTER_OFFSET OFFSET_riscv64_x2
 #else
 #error Unknown architecture.
 #endif

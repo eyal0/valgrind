@@ -28,8 +28,13 @@ usage: valgrind [options] prog-and-args
     --vgdb-stop-at=event1,event2,... invoke gdbserver for given events [none]
          where event is one of:
            startup exit abexit valgrindabexit all none
-    --track-fds=no|yes|all    track open file descriptors? [no]
-                              all includes reporting stdin, stdout and stderr
+    --track-fds=no|yes|all|bad track open file descriptors? [no]
+                              all also reports on open inherited file
+                              descriptors at exit (e.g. stdin/out/err)
+                              bad only reports on file descriptor usage
+                              errors and doesn't list open file descriptors
+                              at exit
+    --modify-fds=no|yes|high  modify newly open file descriptors? [no]
     --time-stamp=no|yes       add timestamps to log messages? [no]
     --log-fd=<number>         log messages to file descriptor [2=stderr]
     --log-file=<file>         log messages to <file>
@@ -43,15 +48,17 @@ usage: valgrind [options] prog-and-args
     --xml-file=<file>         XML output to <file>
     --xml-socket=ipaddr:port  XML output to socket ipaddr:port
     --xml-user-comment=STR    copy STR verbatim into XML output
-    --demangle=no|yes         automatically demangle C++ names? [yes]
+    --demangle=no|yes         automatically demangle decorated names? [yes]
+                              supported languages: C++, D, Rust, Java, Ada
     --num-callers=<number>    show <number> callers in stack traces [12]
     --error-limit=no|yes      stop showing new errors if too many? [yes]
     --exit-on-first-error=no|yes exit code on the first error found? [no]
     --error-exitcode=<number> exit code to return if errors found [0=disable]
     --error-markers=<begin>,<end> add lines with begin/end markers before/after
                               each error output in plain text mode [none]
-    --show-error-list=no|yes  show detected errors list and
-                              suppression counts at exit [no]
+    --show-error-list=no|yes|all  show detected errors list and
+                              suppression counts at exit [no].
+                              all means to also print suppressed errors.
     -s                        same as --show-error-list=yes
     --keep-debuginfo=no|yes   Keep symbols etc for unloaded code [no]
                               This allows saved stack traces (e.g. memory leaks)
@@ -79,6 +86,10 @@ usage: valgrind [options] prog-and-args
                               size/blocks, full: profile current and cumulative
                               allocated size/blocks and freed size/blocks.
     --xtree-memory-file=<file>   xtree memory report file [xtmemory.kcg.%p]
+    --realloc-zero-bytes-frees=yes|no [yes on Linux glibc, no otherwise]
+                              should calls to realloc with a size of 0
+                              free memory and return NULL or
+                              allocate/resize and return non-NULL
 
   uncommon user options for all Valgrind tools:
     --fullpath-after=         (with nothing after the '=')
@@ -154,19 +165,15 @@ usage: valgrind [options] prog-and-args
               attempt to avoid expensive address-space-resync operations
     --max-threads=<number>    maximum number of threads that valgrind can
                               handle [500]
-    --realloc-zero-bytes-frees=yes|no [yes on Linux glibc, no otherwise]
-                              should calls to realloc with a size of 0
-                              free memory and return NULL or
-                              allocate/resize and return non-NULL
 
   user options for Nulgrind:
     (none)
 
   Extra options read from ~/.valgrindrc, $VALGRIND_OPTS, ./.valgrindrc
 
-  Nulgrind is Copyright (C) 2002-2017, and GNU GPL'd, by Nicholas Nethercote.
-  Valgrind is Copyright (C) 2000-2017, and GNU GPL'd, by Julian Seward et al.
-  LibVEX is Copyright (C) 2004-2017, and GNU GPL'd, by OpenWorks LLP et al.
+  Nulgrind is Copyright (C) 2000, and GNU GPL'd, by Nicholas Nethercote et al.
+  Valgrind is Copyright (C) 2000, and GNU GPL'd, by Julian Seward et al.
+  LibVEX is Copyright (C) 2000, and GNU GPL'd, by OpenWorks LLP et al.
 
   Bug reports, feedback, admiration, abuse, etc, to: www.valgrind.org.
 

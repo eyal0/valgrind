@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -166,12 +166,13 @@ typedef
       ULong guest_LLSC_DATA_LO64; // Original value at _ADDR+0.
       ULong guest_LLSC_DATA_HI64; // Original value at _ADDR+8.
 
+      /* Used for FreeBSD syscall dispatching. */
+      ULong guest_SC_CLASS;
       /* Padding to make it have an 16-aligned size */
-      /* UInt  pad_end_0; */
-      /* ULong pad_end_1; */
+      ULong pad_end_1;
+
    }
    VexGuestARM64State;
-
 
 /*---------------------------------------------------------------*/
 /*--- Utility functions for ARM64 guest stuff.                ---*/
@@ -189,6 +190,11 @@ void LibVEX_GuestARM64_initialise ( /*OUT*/VexGuestARM64State* vex_state );
 extern
 ULong LibVEX_GuestARM64_get_nzcv ( /*IN*/
                                    const VexGuestARM64State* vex_state );
+
+/* Put a new value in the carry flag. */
+extern
+void LibVEX_GuestARM64_put_nzcv_c ( /*IN*/  ULong new_carry_flag,
+                                    /*MOD*/ VexGuestARM64State* vex_state );
 
 /* Calculate the ARM64 FPSR state from the saved data, in the format
    36x0:qc:27x0 */

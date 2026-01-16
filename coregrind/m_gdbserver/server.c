@@ -8,7 +8,7 @@
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
+   the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
 
    This program is distributed in the hope that it will be useful,
@@ -230,7 +230,7 @@ int handle_gdb_valgrind_command (char *mon, OutputSink *sink_wanted_at_return)
 "general valgrind monitor commands:\n"
 "  help [debug]            : monitor command help. With debug: + debugging commands\n"
 "  v.wait [<ms>]           : sleep <ms> (default 0) then continue\n"
-"  v.info all_errors       : show all errors found so far\n"
+"  v.info all_errors [also_suppressed] : show all errors found so far\n"
 "  v.info last_error       : show last error found\n"
 "  v.info location <addr>  : show information about location <addr>\n"
 "  v.info n_errs_found [msg] : show the nr of errors found so far and the given msg\n"
@@ -375,9 +375,23 @@ int handle_gdb_valgrind_command (char *mon, OutputSink *sink_wanted_at_return)
       case -1:
          break;
       case 0: // all_errors
+      {
+         Int show_error_list = 1;
+         wcmd = strtok_r (NULL, " ", &ssaveptr);
+         if (wcmd != NULL) {
+            switch (VG_(keyword_id) ("also_suppressed", wcmd, kwd_report_all)) {
+            case -2:
+            case -1: break;
+            case  0:
+               show_error_list = 2;
+               break;
+            default: vg_assert (0);
+            }
+         }
          // A verbosity of minimum 2 is needed to show the errors.
-         VG_(show_all_errors)(/* verbosity */ 2, /* xml */ False);
-         break;
+         VG_(show_all_errors)(/* verbosity */ 2, /* xml */ False, show_error_list);
+      }
+      break;
       case  1: // n_errs_found
          VG_(printf) ("n_errs_found %u n_errs_shown %u (vgdb-error %d) %s\n",
                       VG_(get_n_errs_found) (),
@@ -859,6 +873,65 @@ void handle_query (char *arg_own_buf, int *new_packet_len_p)
       return;
    }
 
+   /* Without argument, traditional remote protocol.  */
+   if (strcmp ("qExecAndArgs", arg_own_buf) == 0) {
+     const HChar *exename = VG_(resolved_exename);
+
+     /* If we don't have an executable, return "U".  */
+     if (exename == NULL) {
+        arg_own_buf[0] = 'U';
+        arg_own_buf[1] = '\0';
+        return;
+     }
+
+     /* Build the response: "S;<hex-prog>;<hex-args>;"
+        Need to hex-encode both the program name and arguments.  */
+
+     /* First, encode the executable name.  */
+     char hex_exename[2 * VG_(strlen)(exename) + 1];
+     hexify(hex_exename, exename, VG_(strlen)(exename));
+
+     /* Build the arguments string from VG_(args_for_client).  */
+     int num_args = VG_(sizeXA)(VG_(args_for_client));
+     char *args_str = NULL;
+
+     if (num_args > 0) {
+       int count = 0;
+       for (int i = 0; i < num_args; i++) {
+         HChar* arg = * (HChar**) VG_(indexXA)(VG_(args_for_client), i);
+         count += VG_(strlen)(arg);
+       }
+
+       /* Allocate space for args + spaces between them + null terminator.  */
+       int args_str_size = count + num_args;
+       args_str = VG_(malloc)("handle_query.qExecAndArgs", args_str_size);
+       char *p = args_str;
+
+       for (int i = 0; i < num_args; i++) {
+         HChar* arg = * (HChar**) VG_(indexXA)(VG_(args_for_client), i);
+         int num = VG_(strlen)(arg);
+         VG_(memcpy)(p, arg, num);
+         p += num;
+         if (i < num_args - 1) {
+           *p++ = ' ';  /* Add space separator between arguments.  */
+         }
+       }
+       *p = '\0';  /* Null terminate the string.  */
+
+       char hex_args_buf[2 * VG_(strlen)(args_str) + 1];
+       hexify(hex_args_buf, args_str, VG_(strlen)(args_str));
+       VG_(free)(args_str);
+
+       /* Build the full response.  */
+       VG_(sprintf)(arg_own_buf, "S;%s;%s;", hex_exename, hex_args_buf);
+     } else {
+       /* No arguments, just send program name with empty args.  */
+       VG_(sprintf)(arg_own_buf, "S;%s;;", hex_exename);
+     }
+
+      return;
+   }
+
    if (strcmp ("qSymbol::", arg_own_buf) == 0) {
       /* We have no symbol to read. */
       write_ok (arg_own_buf);
@@ -1052,7 +1125,7 @@ void handle_query (char *arg_own_buf, int *new_packet_len_p)
          n = -1;
       else {
          n = strlen(name) - ofs;
-         VG_(memcpy) (data, name, n);
+         memcpy (data, name, n);
       }
 
       if (n < 0)
@@ -1111,6 +1184,8 @@ void handle_query (char *arg_own_buf, int *new_packet_len_p)
       VG_(sprintf) (arg_own_buf, "PacketSize=%x", (UInt)PBUFSIZ - 1);
       /* Note: max packet size including frame and checksum, but without
          trailing null byte, which is not sent/received. */
+
+      strcat (arg_own_buf, ";binary-upload+");
 
       strcat (arg_own_buf, ";QStartNoAckMode+");
       strcat (arg_own_buf, ";QPassSignals+");
@@ -1360,6 +1435,20 @@ void server_main (void)
          if (valgrind_write_memory (mem_addr, mem_buf, len) == 0)
             write_ok (own_buf);
          else
+            write_enn (own_buf);
+         break;
+      case 'x':
+         decode_m_packet (&own_buf[1], &mem_addr, &len);
+         if (valgrind_read_memory (mem_addr, mem_buf, len) == 0) {
+            // Read memory is successful.
+            // Complete the reply packet and indicate its length.
+            int out_len;
+            own_buf[0] = 'b';
+            new_packet_len
+               = 1 + remote_escape_output(mem_buf, len,
+                                          (unsigned char *) &own_buf[1], &out_len,
+                                          PBUFSIZ - POVERHSIZ - 1);
+         } else
             write_enn (own_buf);
          break;
       case 'X':

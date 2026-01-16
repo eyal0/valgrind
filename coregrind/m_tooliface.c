@@ -13,7 +13,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -221,8 +221,12 @@ Bool VG_(finish_needs_init)(const HChar** failmsg)
 // These ones don't require any tool-supplied functions
 NEEDS(libc_freeres)
 NEEDS(cxx_freeres)
-NEEDS(core_errors)
 NEEDS(var_info)
+
+void VG_(needs_core_errors)( Bool need )
+{
+   VG_(needs).core_errors = need;
+}
 
 void VG_(needs_superblock_discards)(
    void (*discard)(Addr, VexGuestExtents)

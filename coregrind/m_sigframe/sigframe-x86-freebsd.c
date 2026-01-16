@@ -15,7 +15,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -99,7 +99,7 @@ struct sigframe {
 
    /*
     * The following 7 members are roughly the same as
-    * 'stuct sigframe' in x86/sigrame.h
+    * 'struct sigframe' in x86/sigframe.h
     */
    Int  sigNo;
    Addr psigInfo;      /* code or pointer to sigContext */
@@ -289,7 +289,7 @@ static Addr build_sigframe(ThreadState *tst,
              esp, offsetof(struct sigframe, vg) );
 
    frame->sigNo = sigNo;
-   frame->retaddr = (Addr)&VG_(x86_freebsd_SUBST_FOR_sigreturn);
+   frame->retaddr = (Addr)VG_(x86_freebsd_SUBST_FOR_sigreturn);
    if ((flags & VKI_SA_SIGINFO) == 0)
       frame->psigInfo = (Addr)siginfo->si_code;
    else
@@ -445,7 +445,7 @@ void VG_(sigframe_destroy)( ThreadId tid )
    if (VG_(clo_trace_signals))
       VG_(message)(
          Vg_DebugMsg,
-         "VG_(signal_return) (thread %u): EIP=%#x\n",
+         "VG_(sigframe_destroy) (thread %u): EIP=%#x\n",
          tid, tst->arch.vex.guest_EIP);
 
    /* tell the tools */

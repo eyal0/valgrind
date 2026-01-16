@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -321,6 +321,8 @@ typedef
       ARM64fpu_ABS,
       ARM64fpu_SQRT,
       ARM64fpu_RINT,
+      ARM64fpu_RINTA0,
+      ARM64fpu_RINTE,
       ARM64fpu_RECPX,
       ARM64fpu_INVALID
    }
@@ -814,6 +816,7 @@ typedef
             HReg       rS; // src, a D or S register
             UChar      armRM; // ARM encoded RM:
                               // 00=nearest, 01=+inf, 10=-inf, 11=zero
+            Bool       tiesToAway;
          } VCvtF2I;
          /* Convert between 32-bit and 64-bit FP values (both ways). (FCVT) */
          struct {
@@ -1060,7 +1063,7 @@ extern ARM64Instr* ARM64Instr_VLdStD  ( Bool isLoad, HReg dD, HReg rN,
 extern ARM64Instr* ARM64Instr_VLdStQ  ( Bool isLoad, HReg rQ, HReg rN );
 extern ARM64Instr* ARM64Instr_VCvtI2F ( ARM64CvtOp how, HReg rD, HReg rS );
 extern ARM64Instr* ARM64Instr_VCvtF2I ( ARM64CvtOp how, HReg rD, HReg rS,
-                                        UChar armRM );
+                                        UChar armRM, Bool tiesToAway );
 extern ARM64Instr* ARM64Instr_VCvtSD  ( Bool sToD, HReg dst, HReg src );
 extern ARM64Instr* ARM64Instr_VCvtHS  ( Bool hToS, HReg dst, HReg src );
 extern ARM64Instr* ARM64Instr_VCvtHD  ( Bool hToD, HReg dst, HReg src );
@@ -1112,7 +1115,7 @@ extern void mapRegs_ARM64Instr     ( HRegRemap*, ARM64Instr*, Bool );
 extern Int  emit_ARM64Instr        ( /*MB_MOD*/Bool* is_profInc,
                                      UChar* buf, Int nbuf, const ARM64Instr* i,
                                      Bool mode64,
-                                     VexEndness endness_host,
+                                     const VexArchInfo *archinfo_host,
                                      const void* disp_cp_chain_me_to_slowEP,
                                      const void* disp_cp_chain_me_to_fastEP,
                                      const void* disp_cp_xindir,

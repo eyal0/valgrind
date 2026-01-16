@@ -11,7 +11,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -320,6 +320,7 @@ typedef struct vki_sigaltstack {
 #define VKI_O_TRUNC         00001000        /* not fcntl */
 #define VKI_O_APPEND        00002000
 #define VKI_O_NONBLOCK      00004000
+#define VKI_O_DIRECT        00040000
 
 #define VKI_AT_FDCWD            -100
 
@@ -808,6 +809,8 @@ typedef vki_s390_regs vki_elf_gregset_t;
 #define VKI_HWCAP_S390_VXRS         2048
 #define VKI_HWCAP_S390_VXRS_EXT     8192
 #define VKI_HWCAP_S390_VXRS_EXT2   32768
+#define VKI_HWCAP_S390_DFLT       (1<<18)
+#define VKI_HWCAP_S390_NNPA       (1<<20)
 
 
 //----------------------------------------------------------------------

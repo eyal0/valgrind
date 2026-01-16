@@ -11,7 +11,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -382,10 +382,7 @@ DECL_TEMPLATE (mips_linux, sys_set_thread_area);
 DECL_TEMPLATE (mips_linux, sys_ptrace);
 DECL_TEMPLATE (mips_linux, sys_unshare);
 DECL_TEMPLATE (mips_linux, sys_reboot);
-DECL_TEMPLATE (mips_linux, sys_setdomainname);
 DECL_TEMPLATE (mips_linux, sys_sethostname);
-DECL_TEMPLATE (mips_linux, sys_swapon);
-DECL_TEMPLATE (mips_linux, sys_swapoff);
 
 PRE(sys_mmap2)
 {
@@ -514,28 +511,10 @@ PRE(sys_reboot)
    *flags |= SfMayBlock;
 }
 
-PRE(sys_setdomainname)
-{
-   PRINT ("sys_setdomainname ( %#lx, %ld )", ARG1, SARG2);
-   PRE_REG_READ2 (long, "setdomainname", const void *, name, int, len);
-}
-
 PRE(sys_sethostname)
 {
    PRINT ("sys_sethostname ( %#lx, %ld )", ARG1, SARG2);
    PRE_REG_READ2 (long, "sethostname", const void *, name, int, len);
-}
-
-PRE(sys_swapon)
-{
-   PRINT("sys_swapon ( %#lx, %#lx )", ARG1, ARG2);
-   PRE_REG_READ2(long, "swapon", const void *, path, int, flags);
-}
-
-PRE(sys_swapoff)
-{
-   PRINT("sys_swapoff ( %#lx )", ARG1);
-   PRE_REG_READ1(long, "swapoff", const void *, path);
 }
 
 #undef PRE
@@ -610,10 +589,10 @@ static SyscallTableEntry syscall_main_table[] = {
    LINX_ (__NR_fchownat,               sys_fchownat),
    GENX_ (__NR_fchown,                 sys_fchown),
    LINXY (__NR_openat,                 sys_openat),
-   GENXY (__NR_close,                  sys_close),
+   GENX_ (__NR_close,                  sys_close),
    LINX_ (__NR_vhangup,                sys_vhangup),
    LINXY (__NR_pipe2,                  sys_pipe2),
-   LINX_ (__NR_quotactl,               sys_quotactl),
+   LINXY (__NR_quotactl,               sys_quotactl),
    GENXY (__NR_getdents64,             sys_getdents64),
    LINXY (__NR__llseek,                sys_llseek),
    GENXY (__NR_read,                   sys_read),
@@ -628,10 +607,10 @@ static SyscallTableEntry syscall_main_table[] = {
    LINXY (__NR_pselect6,               sys_pselect6),
    LINXY (__NR_ppoll,                  sys_ppoll),
    LINXY (__NR_signalfd4,              sys_signalfd4),
-   LINX_ (__NR_vmsplice,               sys_vmsplice),
+   LINXY (__NR_vmsplice,               sys_vmsplice),
    LINX_ (__NR_splice,                 sys_splice),
    LINX_ (__NR_tee,                    sys_tee),
-   LINX_ (__NR_readlinkat,             sys_readlinkat),
+   LINXY (__NR_readlinkat,             sys_readlinkat),
    GENX_ (__NR_sync,                   sys_sync),
    GENX_ (__NR_fsync,                  sys_fsync),
    GENX_ (__NR_fdatasync,              sys_fdatasync),
@@ -712,7 +691,7 @@ static SyscallTableEntry syscall_main_table[] = {
    GENX_ (__NR_setgroups,              sys_setgroups),
    GENXY (__NR_uname,                  sys_newuname),
    PLAX_ (__NR_sethostname,            sys_sethostname),
-   PLAX_ (__NR_setdomainname,          sys_setdomainname),
+   LINX_ (__NR_setdomainname,          sys_setdomainname),
    GENXY (__NR_getrusage,              sys_getrusage),
    GENX_ (__NR_umask,                  sys_umask),
    LINXY (__NR_prctl,                  sys_prctl),
@@ -772,8 +751,8 @@ static SyscallTableEntry syscall_main_table[] = {
    GENX_ (__NR_execve,                 sys_execve),
    PLAX_ (__NR_mmap2,                  sys_mmap2),
    LINX_ (__NR_fadvise64_64,           sys_fadvise64_64),
-   PLAX_ (__NR_swapon,                 sys_swapon),
-   PLAX_ (__NR_swapoff,                sys_swapoff),
+   LINX_ (__NR_swapon,                 sys_swapon),
+   LINX_ (__NR_swapoff,                sys_swapoff),
    GENXY (__NR_mprotect,               sys_mprotect),
    GENX_ (__NR_msync,                  sys_msync),
    GENX_ (__NR_mlock,                  sys_mlock),
@@ -812,9 +791,9 @@ static SyscallTableEntry syscall_main_table[] = {
    LINX_ (__NR_setns,                  sys_setns),
    //    (__NR_bpf,                    sys_ni_syscall),
    LINX_ (__NR_execveat,               sys_execveat),
-   //    (__NR_userfaultfd,            sys_ni_syscall),
+   LINXY (__NR_userfaultfd,            sys_userfaultfd),
    LINX_ (__NR_membarrier,             sys_membarrier),
-   //    (__NR_mlock2,                 sys_ni_syscall),
+   GENX_ (__NR_mlock2,                 sys_mlock2),
    //    (__NR_copy_file_range,        sys_ni_syscall),
    //    (__NR_preadv2,                sys_ni_syscall),
    //    (__NR_pwritev2,               sys_ni_syscall),
@@ -824,11 +803,33 @@ static SyscallTableEntry syscall_main_table[] = {
    LINXY (__NR_io_uring_setup,         sys_io_uring_setup),
    LINXY (__NR_io_uring_enter,         sys_io_uring_enter),
    LINXY (__NR_io_uring_register,      sys_io_uring_register),
+   LINXY (__NR_open_tree,              sys_open_tree),
+   LINX_ (__NR_move_mount,             sys_move_mount),
+   LINXY (__NR_fsopen,                 sys_fsopen),
+   LINX_ (__NR_fsconfig,               sys_fsconfig),
+   LINXY (__NR_fsmount,                sys_fsmount),
+   LINXY (__NR_fspick,                 sys_fspick),
    LINXY (__NR_pidfd_open,             sys_pidfd_open),
    GENX_ (__NR_clone3,                 sys_ni_syscall),
    LINXY (__NR_close_range,            sys_close_range),
+   LINXY(__NR_openat2,                 sys_openat2),
+   LINXY(__NR_pidfd_getfd,             sys_pidfd_getfd),
    LINX_ (__NR_faccessat2,             sys_faccessat2),
    LINXY (__NR_epoll_pwait2,           sys_epoll_pwait2),
+   LINXY (__NR_landlock_create_ruleset,sys_landlock_create_ruleset),
+   LINX_ (__NR_landlock_add_rule,      sys_landlock_add_rule),
+   LINX_ (__NR_landlock_restrict_self, sys_landlock_restrict_self),
+   LINXY (__NR_cachestat,              sys_cachestat),
+   LINX_ (__NR_fchmodat2,              sys_fchmodat2),
+   LINXY (__NR_statmount,              sys_statmount),
+   LINXY (__NR_listmount,              sys_listmount),
+   LINXY (__NR_lsm_get_self_attr,      sys_lsm_get_self_attr),
+   LINX_ (__NR_lsm_set_self_attr,      sys_lsm_set_self_attr),
+   LINXY (__NR_lsm_list_modules,       sys_lsm_list_modules),
+   LINX_ (__NR_mseal,                  sys_mseal),
+   LINX_ (__NR_futex_waitv,            sys_futex_waitv),
+   LINXY (__NR_file_getattr,           sys_file_getattr),
+   LINX_ (__NR_file_setattr,           sys_file_setattr),
 };
 
 SyscallTableEntry* ML_(get_linux_syscall_entry) (UInt sysno)

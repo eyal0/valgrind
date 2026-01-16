@@ -13,7 +13,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -62,6 +62,9 @@
 #elif defined(VGA_mips64)
 #  include "libvex_guest_mips64.h"
    typedef VexGuestMIPS64State VexGuestArchState;
+#elif defined(VGA_riscv64)
+#  include "libvex_guest_riscv64.h"
+   typedef VexGuestRISCV64State VexGuestArchState;
 #else
 #  error Unknown arch
 #endif

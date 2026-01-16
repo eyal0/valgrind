@@ -17,7 +17,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -683,7 +683,7 @@ Bool doHelperCall ( /*OUT*/UInt*   stackAdjustAfterCall,
                addInstr(env, ARMInstr_Imm32( argregs[nextArgReg], 0xAA ));
                nextArgReg++;
             }
-            if (nextArgReg >= ARM_N_ARGREGS)
+            if (nextArgReg + 1 >= ARM_N_ARGREGS)
                return False; /* out of argregs */
             HReg raHi, raLo;
             iselInt64Expr(&raHi, &raLo, env, arg);
@@ -1870,14 +1870,7 @@ static HReg iselIntExpr_R_wrk ( ISelEnv* env, IRExpr* e )
 //zz            addInstr(env, X86Instr_Sh32(Xsh_SAR, 31, dst));
 //zz            return dst;
 //zz         }
-//zz         case Iop_Ctz32: {
-//zz            /* Count trailing zeroes, implemented by x86 'bsfl' */
-//zz            HReg dst = newVRegI(env);
-//zz            HReg src = iselIntExpr_R(env, e->Iex.Unop.arg);
-//zz            addInstr(env, X86Instr_Bsfr32(True,src,dst));
-//zz            return dst;
-//zz         }
-         case Iop_Clz32: {
+         case Iop_ClzNat32: {
             /* Count leading zeroes; easy on ARM. */
             HReg dst = newVRegI(env);
             HReg src = iselIntExpr_R(env, e->Iex.Unop.arg);
@@ -6547,7 +6540,7 @@ HInstrArray* iselSB_ARM ( const IRSB* bb,
 {
    Int       i, j;
    HReg      hreg, hregHI;
-   ISelEnv*  env;
+   ISelEnv  *env, envmem;
    UInt      hwcaps_host = archinfo_host->hwcaps;
    ARMAMode1 *amCounter, *amFailAddr;
 
@@ -6560,11 +6553,8 @@ HInstrArray* iselSB_ARM ( const IRSB* bb,
    /* guard against unexpected space regressions */
    vassert(sizeof(ARMInstr) <= 28);
 
-   /* hwcaps should not change from one ISEL call to another. */
-   arm_hwcaps = hwcaps_host; // JRS 2012 Mar 31: FIXME (RM)
-
    /* Make up an initial environment to use. */
-   env = LibVEX_Alloc_inline(sizeof(ISelEnv));
+   env = &envmem;
    env->vreg_ctr = 0;
 
    /* Set up output code array. */

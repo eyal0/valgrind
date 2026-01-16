@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -60,6 +60,8 @@ typedef  ULong  DiOffT;
 DiImage* ML_(img_from_local_file)(const HChar* fullpath);
 
 DiImage* ML_(img_from_fd)(Int fd, const HChar* fullpath);
+
+DiImage* ML_(img_from_memory)(Addr a, SizeT len, const HChar* fullpath);
 
 /* Create an image by connecting to a Valgrind debuginfo server
    (auxprogs/valgrind-di-server.c).  |filename| contains the object
@@ -115,6 +117,10 @@ Int ML_(img_strcmp)(DiImage* img, DiOffT off1, DiOffT off2);
    cast to HChar before comparison. */
 Int ML_(img_strcmp_c)(DiImage* img, DiOffT off1, const HChar* str2);
 
+/* Do strncmp of a C string in the image vs a normal one.  Chars are
+   cast to HChar before comparison. */
+Int ML_(img_strcmp_n)(DiImage* img, DiOffT off1, const HChar* str2, Word n);
+
 /* Do strlen of a C string in the image. */
 SizeT ML_(img_strlen)(DiImage* img, DiOffT off);
 
@@ -138,7 +144,7 @@ UInt ML_(img_calc_gnu_debuglink_crc32)(DiImage* img);
    Returns (virtual) position in image from which decompressed data can be
    read. */
 DiOffT ML_(img_mark_compressed_part)(DiImage* img, DiOffT offset, SizeT szC,
-                                     SizeT szD);
+                                     SizeT szD, UChar typeC);
 
 
 /*------------------------------------------------------------*/

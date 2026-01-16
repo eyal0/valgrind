@@ -42,7 +42,7 @@ typedef struct
   sem_t* xxx;
 } gomp_barrier_t;
 
-typedef long bool;
+
 
 void
 gomp_barrier_init (gomp_barrier_t *bar, unsigned count)
@@ -253,7 +253,11 @@ static sem_t* my_sem_init (char* identity, int pshared, unsigned count)
 
 static int my_sem_destroy ( sem_t* s )
 {
+#if defined(VGO_darwin)
+return 0;
+#else
    return sem_destroy(s);
+#endif
 }
 
 static int my_sem_wait(sem_t* s)

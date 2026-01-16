@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -415,6 +415,16 @@ extern Bool VG_(clo_show_below_main);
    previously captured stack traces.  e.g. ... showing where a block was
    allocated e.g. leaks of or accesses just outside a block. */
 extern Bool VG_(clo_keep_debuginfo);
+
+/* Track open file descriptors? 0 = No, 1 = Yes, 2 = All (including std)  */
+extern UInt  VG_(clo_track_fds);
+
+/* Whether to adjust file descriptor numbers. Yes does for all nonstd file
+   descriptors. High does for all file descriptors.  */
+#define VG_MODIFY_FD_NO 0
+#define VG_MODIFY_FD_YES 1
+#define VG_MODIFY_FD_HIGH 2
+extern UInt  VG_(clo_modify_fds);
 
 
 /* Used to expand file names.  "option_name" is the option name, eg.

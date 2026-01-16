@@ -13,7 +13,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -300,7 +300,7 @@ static UInt local_sys_write_stderr ( const HChar* buf, Int n )
 
 static UInt local_sys_getpid ( void )
 {
-   UInt __res;
+   ULong __res;
    __asm__ volatile (
       "mov  x8, #"VG_STRINGIFY(__NR_getpid)"\n"
       "svc  0x0\n"      /* getpid() */
@@ -518,6 +518,42 @@ static UInt local_sys_getpid ( void )
    return __res;
 }
 
+#elif defined(VGP_arm64_freebsd)
+
+static UInt local_sys_write_stderr ( const HChar* buf, SizeT n )
+{
+   volatile ULong block[2];
+   block[0] = (ULong)buf;
+   block[1] = (ULong)n;
+   __asm__ volatile (
+      "mov  x0, #2\n"          /* stderr */
+      "ldr  x1, [%0]\n"        /* buf */
+      "ldr  x2, [%0, #8]\n"    /* n */
+      "mov  x8, #"VG_STRINGIFY(__NR_write)"\n"
+      "svc  0x0\n"             /* write() */
+      "str  x0, [%0]\n"
+      :
+      : "r" (block)
+      : "x0","x1","x2","x8","cc","memory"
+      );
+   if (block[0] < 0)
+      block[0] = -1;
+   return (UInt)block[0];
+}
+
+static UInt local_sys_getpid ( void )
+{
+   ULong res;
+   __asm__ volatile (
+      "mov x8, #"VG_STRINGIFY(__NR_getpid)"\n"
+      "svc 0x0\n"             /* getpid() */
+      "mov %0, x0\n"          /* set res = x0 */
+      : "=r" (res)
+      :
+      : "x8", "x0", "x1", "cc" );
+   return (UInt)res;
+}
+
 #elif defined(VGP_mips32_linux) || defined(VGP_mips64_linux)
 
 static UInt local_sys_write_stderr ( const HChar* buf, Int n )
@@ -599,6 +635,34 @@ static UInt local_sys_getpid ( void )
        "$t1", "$t2", "$t3", "$t8", "$t9"
    );
    return a0;
+}
+
+#elif defined(VGP_riscv64_linux)
+
+static UInt local_sys_write_stderr ( const HChar* buf, Int n )
+{
+   register RegWord a0 asm("a0") = 2; /* stderr */
+   register RegWord a1 asm("a1") = (RegWord)buf;
+   register RegWord a2 asm("a2") = n;
+   register RegWord a7 asm("a7") = __NR_write;
+   __asm__ volatile (
+      "ecall\n"
+      : "+r" (a0)
+      : "r" (a1), "r" (a2), "r" (a7)
+   );
+   return a0 >= 0 ? (UInt)a0 : -1;
+}
+
+static UInt local_sys_getpid ( void )
+{
+   register RegWord a0 asm("a0");
+   register RegWord a7 asm("a7") = __NR_getpid;
+   __asm__ volatile (
+      "ecall\n"
+      : "=r" (a0)
+      : "r" (a7)
+   );
+   return (UInt)a0;
 }
 
 #elif defined(VGP_x86_solaris)

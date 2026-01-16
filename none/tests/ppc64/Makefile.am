@@ -21,12 +21,12 @@ EXTRA_DIST = \
 	jm-vmx.vgtest \
 	jm-misc.stderr.exp jm-misc.stdout.exp jm-misc.vgtest \
 	lsw.stderr.exp lsw.stdout.exp lsw.vgtest \
-	std_reg_imm.vgtest std_reg_imm.stderr.exp std_reg_imm.stdout.exp std_reg_imm.stdout.exp-LE \
+	std_reg_imm.vgtest std_reg_imm.stdout.exp std_reg_imm.stdout.exp-LE \
 	round.stderr.exp round.stdout.exp round.vgtest \
 	twi_tdi.stderr.exp twi_tdi.stdout.exp twi_tdi.vgtest \
 	tw_td.stderr.exp tw_td.stdout.exp tw_td.vgtest \
 	opcodes.h \
-	power6_bcmp.stderr.exp power6_bcmp.stdout.exp power6_bcmp.vgtest \
+	power6_bcmp.stderr.exp power6_bcmp.vgtest \
 	test_isa_2_06_part1.stderr.exp  test_isa_2_06_part1.stdout.exp  test_isa_2_06_part1.vgtest \
 	test_isa_2_06_part1.stdout.exp-LE \
 	test_isa_2_06_part2.stderr.exp  test_isa_2_06_part2.stdout.exp  test_isa_2_06_part2.vgtest \
@@ -47,7 +47,7 @@ EXTRA_DIST = \
 	jm_int_isa_2_07.stdout.exp  jm_int_isa_2_07.stdout.exp-LE \
 	test_isa_2_07_part2.stderr.exp test_isa_2_07_part2.stdout.exp test_isa_2_07_part2.vgtest \
 	test_tm.stderr.exp test_tm.stdout.exp test_tm.vgtest \
-	test_touch_tm.stderr.exp test_touch_tm.stdout.exp test_touch_tm.vgtest \
+	test_touch_tm.stderr.exp  test_touch_tm.vgtest \
 	ldst_multiple.stderr.exp ldst_multiple.stdout.exp ldst_multiple.vgtest \
 	data-cache-instructions.stderr.exp data-cache-instructions.stdout.exp data-cache-instructions.vgtest \
 	test_isa_3_0_altivec.stderr.exp  \
@@ -190,8 +190,10 @@ test_isa_2_06_part3_CFLAGS = $(AM_CFLAGS) -Winline -Wall -O -g -mregnames $(VSX_
 
 test_dfp1_CFLAGS = $(AM_CFLAGS) -Winline -Wall -O -g -mregnames $(DFP_FLAG) \
 			@FLAG_M64@ $(BUILD_FLAGS_DFP)
+# Explicitly use -std=gnu99 because the meaning of void (*test_func_t)()
+# changed in c23, causing incompatible-pointer-types errors.
 test_dfp2_CFLAGS = $(AM_CFLAGS) -Winline -Wall -O -g -mregnames $(DFP_FLAG) \
-			@FLAG_M64@ $(BUILD_FLAGS_DFP)
+			@FLAG_M64@ $(BUILD_FLAGS_DFP) -std=gnu99
 test_dfp3_CFLAGS = $(AM_CFLAGS) -Winline -Wall -O -g -mregnames $(DFP_FLAG) \
 			@FLAG_M64@ $(BUILD_FLAGS_DFP)
 test_dfp4_CFLAGS = $(AM_CFLAGS) -Winline -Wall -O -g -mregnames $(DFP_FLAG) \

@@ -13,7 +13,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -34,8 +34,11 @@
 #include "pub_core_debuginfo.h"  // DebugInfo
 
 /* Identify a Mach-O object file by peering at the first few bytes of
-   it. */
-extern Bool ML_(is_macho_object_file)( const void* buf, SizeT size );
+   it. Also count the number of RW segements. */
+extern Bool ML_(check_macho_and_get_rw_loads)( Int fd, Int* rw_loads );
+
+/* Same as above, but reads from memory instead of a file descriptor. */
+extern Bool ML_(check_macho_and_get_rw_loads_from_memory)( const void* buf, SizeT size, Int* rw_loads );
 
 /* The central function for reading Mach-O debug info.  For the
    object/exe specified by the DebugInfo, find Mach-O sections, then read

@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -167,8 +167,11 @@ typedef
          been interrupted by a signal. */
       ULong guest_IP_AT_SYSCALL;
 
-      /* Padding to make it have an 16-aligned size */
-      ULong pad3;
+      /* Used on FreeBSD as part of a mechanism to allow signal handlers
+           to use TLS. */
+      ULong guest_TLSBASE;
+
+      /* Add padding here to make it have an 16-aligned size */
    }
    VexGuestAMD64State;
 
@@ -202,13 +205,6 @@ extern
 void
 LibVEX_GuestAMD64_put_rflag_c ( ULong new_carry_flag,
                                 /*MOD*/VexGuestAMD64State* vex_state );
-
-#if defined(VGO_freebsd) || defined(VGO_darwin)
-void _______VVVVVVVV_after_GuestAMD64_put_rflag_c_VVVVVVVV_______ (void);
-extern Addr addr_amd64g_calculate_rflags_all_WRK;
-extern Addr addr________VVVVVVVV_amd64g_calculate_rflags_all_WRK_VVVVVVVV_______;
-#endif
-
 
 /* Do FXSAVE from the supplied VexGuestAMD64tate structure and store the
    result at the given address which represents a buffer of at least 416

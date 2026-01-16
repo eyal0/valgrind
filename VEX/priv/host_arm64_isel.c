@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -1627,8 +1627,10 @@ static HReg iselCondCode_R_wrk ( ISelEnv* env, IRExpr* e )
    addInstr(env, ARM64Instr_Set64(res, cc));
    return res;
 
+   /* PJF the following two lines are dead code
    ppIRExpr(e);
    vpanic("iselCondCode_R(arm64)");
+   */
 }
 
 
@@ -1919,17 +1921,19 @@ static HReg iselIntExpr_R_wrk ( ISelEnv* env, IRExpr* e )
            UInt irrm = arg1con->Ico.U32;
            /* Find the ARM-encoded equivalent for |irrm|. */
            UInt armrm = 4; /* impossible */
+           Bool tiesToAway = False;
            switch (irrm) {
-              case Irrm_NEAREST: armrm = 0; break;
-              case Irrm_NegINF:  armrm = 2; break;
-              case Irrm_PosINF:  armrm = 1; break;
-              case Irrm_ZERO:    armrm = 3; break;
+              case Irrm_NEAREST:            armrm = 0; break;
+              case Irrm_NegINF:             armrm = 2; break;
+              case Irrm_PosINF:             armrm = 1; break;
+              case Irrm_ZERO:               armrm = 3; break;
+              case Irrm_NEAREST_TIE_AWAY_0: armrm = 0; tiesToAway = True; break;
               default: goto irreducible;
            }
            HReg src = (srcIsD ? iselDblExpr : iselFltExpr)
                          (env, e->Iex.Binop.arg2);
            HReg dst = newVRegI(env);
-           addInstr(env, ARM64Instr_VCvtF2I(cvt_op, dst, src, armrm));
+           addInstr(env, ARM64Instr_VCvtF2I(cvt_op, dst, src, armrm, tiesToAway));
            return dst;
         }
       } /* local scope */
@@ -2044,7 +2048,7 @@ static HReg iselIntExpr_R_wrk ( ISelEnv* env, IRExpr* e )
             addInstr(env, ARM64Instr_Unary(dst, src, ARM64un_NOT));
             return dst;
          }
-         case Iop_Clz64: {
+         case Iop_ClzNat64: {
             HReg dst = newVRegI(env);
             HReg src = iselIntExpr_R(env, e->Iex.Unop.arg);
             addInstr(env, ARM64Instr_Unary(dst, src, ARM64un_CLZ));
@@ -3436,6 +3440,18 @@ static HReg iselDblExpr_wrk ( ISelEnv* env, IRExpr* e )
             addInstr(env, ARM64Instr_VCvtI2F(cvt_op, dst, src));
             return dst;
          }
+         case Iop_RoundF64toIntA0: {
+            HReg src = iselDblExpr(env, e->Iex.Unop.arg);
+            HReg dst = newVRegD(env);
+            addInstr(env, ARM64Instr_VUnaryD(ARM64fpu_RINTA0, dst, src));
+            return dst;
+         }
+         case Iop_RoundF64toIntE: {
+            HReg src = iselDblExpr(env, e->Iex.Unop.arg);
+            HReg dst = newVRegD(env);
+            addInstr(env, ARM64Instr_VUnaryD(ARM64fpu_RINTE, dst, src));
+            return dst;
+         }
          default:
             break;
       }
@@ -3622,6 +3638,18 @@ static HReg iselFltExpr_wrk ( ISelEnv* env, IRExpr* e )
             HReg src = iselF16Expr(env, e->Iex.Unop.arg);
             HReg dst = newVRegD(env);
             addInstr(env, ARM64Instr_VCvtHS(True/*hToS*/, dst, src));
+            return dst;
+         }
+         case Iop_RoundF32toIntA0: {
+            HReg src = iselFltExpr(env, e->Iex.Unop.arg);
+            HReg dst = newVRegD(env);
+            addInstr(env, ARM64Instr_VUnaryS(ARM64fpu_RINTA0, dst, src));
+            return dst;
+         }
+         case Iop_RoundF32toIntE: {
+            HReg src = iselFltExpr(env, e->Iex.Unop.arg);
+            HReg dst = newVRegD(env);
+            addInstr(env, ARM64Instr_VUnaryS(ARM64fpu_RINTE, dst, src));
             return dst;
          }
          default:
@@ -4613,7 +4641,7 @@ HInstrArray* iselSB_ARM64 ( const IRSB* bb,
 {
    Int        i, j;
    HReg       hreg, hregHI;
-   ISelEnv*   env;
+   ISelEnv    *env, envmem;
    UInt       hwcaps_host = archinfo_host->hwcaps;
    ARM64AMode *amCounter, *amFailAddr;
 
@@ -4627,7 +4655,7 @@ HInstrArray* iselSB_ARM64 ( const IRSB* bb,
    vassert(sizeof(ARM64Instr) <= 32);
 
    /* Make up an initial environment to use. */
-   env = LibVEX_Alloc_inline(sizeof(ISelEnv));
+   env = &envmem;
    env->vreg_ctr = 0;
 
    /* Set up output code array. */

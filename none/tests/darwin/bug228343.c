@@ -38,6 +38,7 @@ void *Worker() {
    void *x = malloc((i % 64) + 1);
    free (x);
  }
+ return NULL;
 }
 
 void SignalHandlerWithSpinlock(int sig, siginfo_t *siginfo, void *context) {
@@ -54,6 +55,7 @@ int main() {
  pthread_create(&w_2, NULL, Worker, NULL);
  pthread_join(w_1, NULL);
  pthread_join(w_2, NULL);
- printf("\tGLOB=%d\n", GLOB);
+ if (GLOB)
+  printf("\tGLOB was incremented\n");
  return 0;
 }

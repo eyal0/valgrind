@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -100,13 +100,10 @@ typedef enum {
 } s390_opnd_t;
 
 
-/* Naming convention for operand locations:
-   R    - GPR
-   I    - immediate value
-   M    - memory (any Amode may be used)
-*/
-
-/* An operand that is either in a GPR or is addressable via a BX20 amode */
+/* An operand that is either
+   R  located in a GPR   or
+   M  located in memory and addressable via any amode   or
+   I  an immediate integer constant */
 typedef struct {
    s390_opnd_t tag;
    union {
@@ -385,8 +382,8 @@ typedef enum {
    S390_VEC_INT_MUL_HIGHS,
    S390_VEC_INT_MUL_HIGHU,
    S390_VEC_INT_MUL_LOW,
-   S390_VEC_INT_MUL_EVENS,
-   S390_VEC_INT_MUL_EVENU,
+   S390_VEC_INT_MUL_ODDS,
+   S390_VEC_INT_MUL_ODDU,
    S390_VEC_ELEM_SHL_V,
    S390_VEC_ELEM_SHRA_V,
    S390_VEC_ELEM_SHRL_V,
@@ -706,8 +703,18 @@ typedef struct {
          s390_amode   *guest_IA;
       } xassisted;
       struct {
-         /* fixs390: I don't think these are really needed
-            as the gsp and the offset are fixed  no ? */
+         /* Note: these fields are needed. Here's why:
+            These fields are amodes for accessing the host_EvC_COUNTER and
+            host_EvC_FAILADDR fields in the guest state.
+            When guest and host architecture are both s390x then we know that
+            the displacement in evcheck::counter is
+            offsetof(VexGuestS390XState, host_EvC_COUNTER) and likewise for
+            the displacement in evcheck::fail_addr. There would be no point
+            to build these amodes in the first place because we could just
+            hardwire the displacements in s390_insn_evcheck_emit.
+            However in a multi-arch setting the amodes point to the
+            host_EvC_COUNTER/FAILADDR fields in a *different* guest state and
+            those offsets are not known. So we do need to build the amodes. */
          s390_amode   *counter;    /* dispatch counter */
          s390_amode   *fail_addr;
       } evcheck;
@@ -878,13 +885,13 @@ UInt ppHRegS390(HReg);
 void  getRegUsage_S390Instr( HRegUsage *, const s390_insn *, Bool );
 void  mapRegs_S390Instr    ( HRegRemap *, s390_insn *, Bool );
 Int   emit_S390Instr       ( Bool *, UChar *, Int, const s390_insn *, Bool,
-                             VexEndness, const void *, const void *,
+                             const VexArchInfo *, const void *, const void *,
                              const void *, const void *);
 const RRegUniverse *getRRegUniverse_S390( void );
 void  genSpill_S390        ( HInstr **, HInstr **, HReg , Int , Bool );
 void  genReload_S390       ( HInstr **, HInstr **, HReg , Int , Bool );
-HInstr* directReload_S390  ( HInstr *, HReg, Short );
-extern s390_insn* genMove_S390(HReg from, HReg to, Bool mode64);
+HInstr *directReload_S390  ( HInstr *, HReg, Short );
+s390_insn *genMove_S390    ( HReg from, HReg to, Bool mode64);
 HInstrArray *iselSB_S390   ( const IRSB *, VexArch, const VexArchInfo *,
                              const VexAbiInfo *, Int, Int, Bool, Bool, Addr);
 
@@ -907,42 +914,32 @@ VexInvalRange patchProfInc_S390(VexEndness endness_host,
                                 void  *code_to_patch,
                                 const ULong *location_of_counter);
 
-/* KLUDGE: See detailled comment in host_s390_defs.c. */
+/* KLUDGE: See detailled comment in main_main.c. */
 extern UInt s390_host_hwcaps;
 
 /* Convenience macros to test installed facilities */
-#define s390_host_has_ldisp \
-                      (s390_host_hwcaps & (VEX_HWCAPS_S390X_LDISP))
-#define s390_host_has_eimm \
-                      (s390_host_hwcaps & (VEX_HWCAPS_S390X_EIMM))
-#define s390_host_has_gie \
-                      (s390_host_hwcaps & (VEX_HWCAPS_S390X_GIE))
-#define s390_host_has_dfp \
-                      (s390_host_hwcaps & (VEX_HWCAPS_S390X_DFP))
-#define s390_host_has_fgx \
-                      (s390_host_hwcaps & (VEX_HWCAPS_S390X_FGX))
-#define s390_host_has_etf2 \
-                      (s390_host_hwcaps & (VEX_HWCAPS_S390X_ETF2))
-#define s390_host_has_stfle \
-                      (s390_host_hwcaps & (VEX_HWCAPS_S390X_STFLE))
-#define s390_host_has_etf3 \
-                      (s390_host_hwcaps & (VEX_HWCAPS_S390X_ETF3))
-#define s390_host_has_stckf \
-                      (s390_host_hwcaps & (VEX_HWCAPS_S390X_STCKF))
-#define s390_host_has_fpext \
-                      (s390_host_hwcaps & (VEX_HWCAPS_S390X_FPEXT))
-#define s390_host_has_lsc \
-                      (s390_host_hwcaps & (VEX_HWCAPS_S390X_LSC))
-#define s390_host_has_pfpo \
-                      (s390_host_hwcaps & (VEX_HWCAPS_S390X_PFPO))
 #define s390_host_has_vx \
                       (s390_host_hwcaps & (VEX_HWCAPS_S390X_VX))
 #define s390_host_has_msa5 \
                       (s390_host_hwcaps & (VEX_HWCAPS_S390X_MSA5))
+#define s390_host_has_mi2 \
+                      (s390_host_hwcaps & (VEX_HWCAPS_S390X_MI2))
 #define s390_host_has_lsc2 \
                       (s390_host_hwcaps & (VEX_HWCAPS_S390X_LSC2))
 #define s390_host_has_vxe \
                       (s390_host_hwcaps & (VEX_HWCAPS_S390X_VXE))
+#define s390_host_has_nnpa \
+                      (s390_host_hwcaps & (VEX_HWCAPS_S390X_NNPA))
+#define s390_host_has_dflt \
+                      (s390_host_hwcaps & (VEX_HWCAPS_S390X_DFLT))
+#define s390_host_has_vxe2 \
+                      (s390_host_hwcaps & (VEX_HWCAPS_S390X_VXE2))
+#define s390_host_has_vxd \
+                      (s390_host_hwcaps & (VEX_HWCAPS_S390X_VXD))
+#define s390_host_has_msa8 \
+                      (s390_host_hwcaps & (VEX_HWCAPS_S390X_MSA8))
+#define s390_host_has_msa9 \
+                      (s390_host_hwcaps & (VEX_HWCAPS_S390X_MSA9))
 #endif /* ndef __VEX_HOST_S390_DEFS_H */
 
 /*---------------------------------------------------------------*/

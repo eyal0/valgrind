@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -83,12 +83,111 @@
 // magic mmap() flags
 #define	VKI_MAP_ANONYMOUS MAP_ANON	// linux synonym
 
+// See xnu/osfmk/mach/vm_statistics.h
+#define VKI_VM_MEMORY_MALLOC 1
+#define VKI_VM_MEMORY_MALLOC_SMALL 2
+#define VKI_VM_MEMORY_MALLOC_LARGE 3
+#define VKI_VM_MEMORY_MALLOC_HUGE 4
+#define VKI_VM_MEMORY_BRK 5
+#define VKI_VM_MEMORY_REALLOC 6
+#define VKI_VM_MEMORY_MALLOC_TINY 7
+#define VKI_VM_MEMORY_MALLOC_LARGE_REUSABLE 8
+#define VKI_VM_MEMORY_MALLOC_LARGE_REUSED 9
+#define VKI_VM_MEMORY_ANALYSIS_TOOL 10
+#define VKI_VM_MEMORY_MALLOC_NANO 11
+#define VKI_VM_MEMORY_MALLOC_MEDIUM 12
+#define VKI_VM_MEMORY_MALLOC_PROB_GUARD 13
+#define VKI_VM_MEMORY_MACH_MSG 20
+#define VKI_VM_MEMORY_IOKIT 21
+#define VKI_VM_MEMORY_STACK 30
+#define VKI_VM_MEMORY_GUARD  31
+#define VKI_VM_MEMORY_SHARED_PMAP 32
+#define VKI_VM_MEMORY_DYLIB 33
+#define VKI_VM_MEMORY_OBJC_DISPATCHERS 34
+#define VKI_VM_MEMORY_UNSHARED_PMAP 35
+#define VKI_VM_MEMORY_APPKIT 40
+#define VKI_VM_MEMORY_FOUNDATION 41
+#define VKI_VM_MEMORY_COREGRAPHICS 42
+#define VKI_VM_MEMORY_CORESERVICES 43
+#define VKI_VM_MEMORY_JAVA 44
+#define VKI_VM_MEMORY_COREDATA 45
+#define VKI_VM_MEMORY_COREDATA_OBJECTIDS 46
+#define VKI_VM_MEMORY_ATS 50
+#define VKI_VM_MEMORY_LAYERKIT 51
+#define VKI_VM_MEMORY_CGIMAGE 52
+#define VKI_VM_MEMORY_TCMALLOC 53
+#define VKI_VM_MEMORY_COREGRAPHICS_DATA     54
+#define VKI_VM_MEMORY_COREGRAPHICS_SHARED   55
+#define VKI_VM_MEMORY_COREGRAPHICS_FRAMEBUFFERS     56
+#define VKI_VM_MEMORY_COREGRAPHICS_BACKINGSTORES    57
+#define VKI_VM_MEMORY_COREGRAPHICS_XALLOC 58
+#define VKI_VM_MEMORY_DYLD 60
+#define VKI_VM_MEMORY_DYLD_MALLOC 61
+#define VKI_VM_MEMORY_SQLITE 62
+#define VKI_VM_MEMORY_JAVASCRIPT_CORE 63
+#define VKI_VM_MEMORY_JAVASCRIPT_JIT_EXECUTABLE_ALLOCATOR 64
+#define VKI_VM_MEMORY_JAVASCRIPT_JIT_REGISTER_FILE 65
+#define VKI_VM_MEMORY_GLSL  66
+#define VKI_VM_MEMORY_OPENCL    67
+#define VKI_VM_MEMORY_COREIMAGE 68
+#define VKI_VM_MEMORY_WEBCORE_PURGEABLE_BUFFERS 69
+#define VKI_VM_MEMORY_IMAGEIO       70
+#define VKI_VM_MEMORY_COREPROFILE   71
+#define VKI_VM_MEMORY_ASSETSD       72
+#define VKI_VM_MEMORY_OS_ALLOC_ONCE 73
+#define VKI_VM_MEMORY_LIBDISPATCH 74
+#define VKI_VM_MEMORY_ACCELERATE 75
+#define VKI_VM_MEMORY_COREUI 76
+#define VKI_VM_MEMORY_COREUIFILE 77
+#define VKI_VM_MEMORY_GENEALOGY 78
+#define VKI_VM_MEMORY_RAWCAMERA 79
+#define VKI_VM_MEMORY_CORPSEINFO 80
+#define VKI_VM_MEMORY_ASL 81
+#define VKI_VM_MEMORY_SWIFT_RUNTIME 82
+#define VKI_VM_MEMORY_SWIFT_METADATA 83
+#define VKI_VM_MEMORY_DHMM 84
+#define VKI_VM_MEMORY_SCENEKIT 86
+#define VKI_VM_MEMORY_SKYWALK 87
+#define VKI_VM_MEMORY_IOSURFACE 88
+#define VKI_VM_MEMORY_LIBNETWORK 89
+#define VKI_VM_MEMORY_AUDIO 90
+#define VKI_VM_MEMORY_VIDEOBITSTREAM 91
+#define VKI_VM_MEMORY_CM_XPC 92
+#define VKI_VM_MEMORY_CM_RPC 93
+#define VKI_VM_MEMORY_CM_MEMORYPOOL 94
+#define VKI_VM_MEMORY_CM_READCACHE 95
+#define VKI_VM_MEMORY_CM_CRABS 96
+#define VKI_VM_MEMORY_QUICKLOOK_THUMBNAILS 97
+#define VKI_VM_MEMORY_ACCOUNTS 98
+#define VKI_VM_MEMORY_SANITIZER 99
+#define VKI_VM_MEMORY_IOACCELERATOR 100
+#define VKI_VM_MEMORY_CM_REGWARP 101
+#define VKI_VM_MEMORY_EAR_DECODER 102
+#define VKI_VM_MEMORY_COREUI_CACHED_IMAGE_DATA 103
+#define VKI_VM_MEMORY_COLORSYNC 104
+#define VKI_VM_MEMORY_BTINFO 105
+#define VKI_VM_MEMORY_CM_HLS 106
+#define VKI_VM_MEMORY_ROSETTA 230
+#define VKI_VM_MEMORY_ROSETTA_THREAD_CONTEXT 231
+#define VKI_VM_MEMORY_ROSETTA_INDIRECT_BRANCH_MAP 232
+#define VKI_VM_MEMORY_ROSETTA_RETURN_STACK 233
+#define VKI_VM_MEMORY_ROSETTA_EXECUTABLE_HEAP 234
+#define VKI_VM_MEMORY_ROSETTA_USER_LDT 235
+#define VKI_VM_MEMORY_ROSETTA_ARENA 236
+#define VKI_VM_MEMORY_ROSETTA_10 239
+#define VKI_VM_MEMORY_APPLICATION_SPECIFIC_1 240
+#define VKI_VM_MEMORY_VALGRIND 242
+#define VKI_VM_MEMORY_APPLICATION_SPECIFIC_16 255
+
 // fds for mmap(MAP_ANON), displayed by vmmap
-#define VM_TAG_VALGRIND VM_MAKE_TAG(239)  // SkAnonV
+#define VM_TAG_VALGRIND VM_MAKE_TAG(VKI_VM_MEMORY_VALGRIND)  // SkAnonV
 
 // page sizes
 #define VKI_MAX_PAGE_SHIFT VKI_PAGE_SHIFT
 #define VKI_MAX_PAGE_SIZE VKI_PAGE_SIZE
+
+// pthread
+#define VKI_PTHREAD_START_CUSTOM 0x01000000
 
 // types
 typedef uint32_t vki_u32;
@@ -197,7 +296,7 @@ typedef uint32_t vki_u32;
 #define vki_cmsghdr cmsghdr
 
 
-#define VKI_CMSG_ALIGN(a) 	ALIGN(a)
+#define VKI_CMSG_ALIGN(a) 	__DARWIN_ALIGN32(a)
 #define	VKI_CMSG_DATA(cmsg)	CMSG_DATA(cmsg)
 #define	VKI_CMSG_FIRSTHDR(mhdr)	CMSG_FIRSTHDR(mhdr)
 #define	VKI_CMSG_NXTHDR(mhdr, cmsg)	CMSG_NXTHDR(mhdr, cmsg)
@@ -274,6 +373,8 @@ typedef uint32_t vki_u32;
 #define	VKI_O_EXCL	O_EXCL
 #define	VKI_O_EVTONLY	O_EVTONLY
 
+#define VKI_AT_FDCWD AT_FDCWD
+
 #define	VKI_F_DUPFD	F_DUPFD
 #define	VKI_F_GETFD	F_GETFD
 #define	VKI_F_SETFD	F_SETFD
@@ -306,6 +407,12 @@ typedef uint32_t vki_u32;
 # define VKI_F_ADDFILESIGS_FOR_DYLD_SIM  F_ADDFILESIGS_FOR_DYLD_SIM
 # define VKI_F_BARRIERFSYNC              F_BARRIERFSYNC
 # define VKI_F_ADDFILESIGS_RETURN        F_ADDFILESIGS_RETURN
+#endif
+#if DARWIN_VERS >= DARWIN_10_14
+# define VKI_F_CHECK_LV                  F_CHECK_LV
+#endif
+#if DARWIN_VERS >= DARWIN_10_15
+# define VKI_F_SPECULATIVE_READ          F_SPECULATIVE_READ
 #endif
 #define VKI_F_FULLFSYNC	F_FULLFSYNC
 #define VKI_F_PATHPKG_CHECK	F_PATHPKG_CHECK
@@ -346,6 +453,10 @@ typedef uint32_t vki_u32;
 #define	VKI_MAP_RESERVED0080	MAP_RESERVED0080
 #define	VKI_MAP_NOEXTEND	MAP_NOEXTEND
 #define	VKI_MAP_HASSEMAPHORE	MAP_HASSEMAPHORE
+#if DARWIN_VERS >= DARWIN_11_00
+#define VKI_MAP_NOCACHE MAP_NOCACHE
+#define VKI_MAP_JIT MAP_JIT
+#endif
 #define	VKI_MAP_FILE	MAP_FILE
 #define	VKI_MAP_ANON	MAP_ANON
 #define VKI_MAP_FAILED	MAP_FAILED
@@ -424,6 +535,9 @@ typedef struct {
 
 //typedef  struct __sigaction  vki_sigaction_toK_t;
 //typedef  struct sigaction    vki_sigaction_fromK_t;
+
+#define VKI_UC_TRAD        1
+#define VKI_UC_FLAVOR     30
 
 typedef
    struct {
@@ -877,6 +991,11 @@ struct ByteRangeLockPB2
 #define VKI_WQOPS_SET_EVENT_MANAGER_PRIORITY 128  /* max() in the provided priority in the the priority of the event manager */
 #define VKI_WQOPS_THREAD_WORKLOOP_RETURN     256  /* parks the thread after delivering the passed kevent array */
 #define VKI_WQOPS_SHOULD_NARROW              512  /* checks whether we should narrow our concurrency */
+#define VKI_WQOPS_SETUP_DISPATCH            1024  /* setup pthread workqueue-related operations */
+
+#define VKI_WORKQ_DISPATCH_CONFIG_VERSION        2
+#define VKI_WORKQ_DISPATCH_MIN_SUPPORTED_VERSION 1
+#define VKI_WORKQ_DISPATCH_SUPPORTED_FLAGS       0
 
 
 #include <sys/ttycom.h>
@@ -1120,7 +1239,7 @@ typedef int vki_errno_t;
 
 /* necp stuff.  This doesn't appear to exist in any user space include
    file. */
-#if DARWIN_VERS == DARWIN_10_10
+#if DARWIN_VERS >= DARWIN_10_10
 struct vki_necp_aggregate_result {
    vki_u_int32_t field1;
    unsigned int  field2;
@@ -1130,7 +1249,10 @@ struct vki_necp_aggregate_result {
    u_int32_t     field6;
    u_int32_t     field7;
 };
-#endif /* DARWIN_VERS == DARWIN_10_10 */
+
+#define VKI_CSR_CHECK 0
+#define VKI_CSR_GET_ACTIVE_CONFIG 1
+#endif /* DARWIN_VERS >= DARWIN_10_10 */
 
 #if DARWIN_VERS >= DARWIN_10_12
 // ulock_wake & ulock_wait operations
@@ -1141,8 +1263,80 @@ struct vki_necp_aggregate_result {
 // ulock_wake & ulock_wait flags
 #define ULF_NO_ERRNO            0x01000000
 
+// ulock_wake flags
+#define VKI_ULF_WAKE_ALL          0x00000100
+#define VKI_ULF_WAKE_THREAD       0x00000200
+
 // ulock_wait flags
 #define WKI_ULF_WAIT_WORKQ_DATA_CONTENTION	0x00010000
+
+#define VKI_NECP_CLIENT_ACTION_ADD                     1
+#define VKI_NECP_CLIENT_ACTION_REMOVE                  2
+#define VKI_NECP_CLIENT_ACTION_COPY_PARAMETERS         3
+#define VKI_NECP_CLIENT_ACTION_COPY_RESULT             4
+#define VKI_NECP_CLIENT_ACTION_COPY_LIST               5
+#define VKI_NECP_CLIENT_ACTION_AGENT                   7
+#define VKI_NECP_CLIENT_ACTION_COPY_AGENT              8
+#define VKI_NECP_CLIENT_ACTION_COPY_INTERFACE          9
+#define VKI_NECP_CLIENT_ACTION_COPY_ROUTE_STATISTICS  11
+#define VKI_NECP_CLIENT_ACTION_AGENT_USE              12
+#define VKI_NECP_CLIENT_ACTION_UPDATE_CACHE           14
+#define VKI_NECP_CLIENT_ACTION_COPY_CLIENT_UPDATE     15
+#define VKI_NECP_CLIENT_ACTION_COPY_UPDATED_RESULT    16
+#define VKI_NECP_CLIENT_ACTION_CLAIM                  19
+#define VKI_NECP_CLIENT_ACTION_SIGN                   20
+
+#define VKI_NECP_MAX_CLIENT_PARAMETERS_SIZE    1024
+#define VKI_NECP_CLIENT_ACTION_SIGN_TAG_LENGTH   32
+
+#define VKI_IFXNAMSIZ     IFNAMSIZ + 8
+#define VKI_IFNET_SIGNATURELEN      20
+
+#define VKI_UL_COMPARE_AND_WAIT             1
+#define VKI_UL_UNFAIR_LOCK                  2
+#define VKI_UL_COMPARE_AND_WAIT_SHARED      3
+#define VKI_UL_UNFAIR_LOCK64_SHARED         4
+#define VKI_UL_COMPARE_AND_WAIT64           5
+#define VKI_UL_COMPARE_AND_WAIT64_SHARED    6
+
+struct vki_necp_client_signable {
+	uuid_t client_id;
+	u_int32_t sign_type;
+} __attribute__((__packed__));
+
+struct vki_necp_cache_buffer {
+	u_int8_t                necp_cache_buf_type;    //  NECP_CLIENT_CACHE_TYPE_*
+	u_int8_t                necp_cache_buf_ver;     //  NECP_CLIENT_CACHE_TYPE_*_VER
+	u_int32_t               necp_cache_buf_size;
+	mach_vm_address_t       necp_cache_buf_addr;
+};
+
+struct vki_necp_interface_signature {
+  u_int8_t signature[VKI_IFNET_SIGNATURELEN];
+  u_int8_t signature_len;
+};
+
+struct vki_necp_interface_details_legacy {
+	char name[VKI_IFXNAMSIZ];
+	u_int32_t index;
+	u_int32_t generation;
+	u_int32_t functional_type;
+	u_int32_t delegate_index;
+	u_int32_t flags; // see NECP_INTERFACE_FLAG_*
+	u_int32_t mtu;
+	struct vki_necp_interface_signature ipv4_signature;
+	struct vki_necp_interface_signature ipv6_signature;
+};
+
+struct vki_necp_agent_use_parameters {
+	uuid_t agent_uuid;
+	uint64_t out_use_count;
+};
+
+// Precalculated as the struct are really big
+#define VKI_IFNET_STATS_PER_FLOW_SIZE 96
+#define VKI_NECP_STAT_COUNTS_SIZE 68
+
 #endif /* DARWIN_VERS >= DARWIN_10_12 */
 
 #endif

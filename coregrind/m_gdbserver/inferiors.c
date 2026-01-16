@@ -9,7 +9,7 @@
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
+   the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
 
    This program is distributed in the hope that it will be useful,
@@ -100,7 +100,7 @@ void add_thread (unsigned long thread_id, void *target_data, unsigned int gdb_id
    struct thread_info *new_thread
       = (struct thread_info *) malloc (sizeof (*new_thread));
 
-   VG_(memset) (new_thread, 0, sizeof (*new_thread));
+   memset (new_thread, 0, sizeof (*new_thread));
 
    new_thread->entry.id = thread_id;
 

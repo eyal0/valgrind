@@ -13,7 +13,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -50,10 +50,14 @@
 /* Arguments for a syscall. */
 typedef
    struct SyscallArgs {
-#if defined(VGO_freebsd)
-      Word klass;
+      Word canonical_sysno;
+#if defined(VGO_freebsd) || defined(VGO_darwin)
+      /*
+        * This may be the same as canonical_sysno (normal syscalls)
+       * Or it may be __NR_syscall or __NR___syscall
+       */
+      Word original_sysno;
 #endif
-      Word sysno;
       RegWord arg1;
       RegWord arg2;
       RegWord arg3;
@@ -94,7 +98,7 @@ typedef
          || defined(VGP_ppc32_linux) \
          || defined(VGP_arm_linux) || defined(VGP_s390x_linux) \
          || defined(VGP_arm64_linux) \
-         || defined(VGP_nanomips_linux)
+         || defined(VGP_nanomips_linux) || defined(VGP_riscv64_linux)
       Int o_arg1;
       Int o_arg2;
       Int o_arg3;
@@ -121,7 +125,7 @@ typedef
       Int s_arg6;
       Int s_arg7;
       Int s_arg8;
-#     elif defined(VGP_amd64_freebsd)
+#     elif defined(VGP_amd64_freebsd) || defined(VGP_amd64_darwin)
       Int o_arg1;
       Int o_arg2;
       Int o_arg3;
@@ -137,6 +141,15 @@ typedef
       Int s_arg7;
       Int s_arg8;
       Bool arg6_is_reg;
+#     elif defined(VGP_arm64_freebsd)
+      Int o_arg1;
+      Int o_arg2;
+      Int o_arg3;
+      Int o_arg4;
+      Int o_arg5;
+      Int o_arg6;
+      Int o_arg7;
+      Int o_arg8;
 #     elif defined(VGP_mips32_linux)
       Int o_arg1;
       Int o_arg2;
@@ -155,7 +168,7 @@ typedef
       Int s_arg6;
       Int s_arg7;
       Int s_arg8;
-#     elif defined(VGP_amd64_darwin) || defined(VGP_amd64_solaris)
+#     elif defined(VGP_amd64_solaris)
       Int o_arg1;
       Int o_arg2;
       Int o_arg3;
@@ -231,12 +244,9 @@ extern
 SyscallTableEntry* ML_(get_linux_syscall_entry)( UInt sysno );
 
 #elif defined(VGO_darwin)
-/* XXX: Darwin still uses the old scheme of exposing the table
-   array(s) and size(s) directly to syswrap-main.c.  This should be
-   fixed. */
 
-extern const SyscallTableEntry ML_(syscall_table)[];
-extern const UInt ML_(syscall_table_size);
+extern
+const SyscallTableEntry* ML_(get_darwin_syscall_entry)( UInt sysno );
 
 #elif defined(VGO_solaris)
 extern
@@ -354,7 +364,7 @@ const SyscallTableEntry* ML_(get_freebsd_syscall_entry)( UInt sysno );
 
 /* Reference to the syscall's arguments -- the ones which the
    pre-wrapper may have modified, not the original copy. */
-#define SYSNO  (arrghs->sysno)
+#define SYSNO  (arrghs->canonical_sysno)
 #define ARG1   (arrghs->arg1)
 #define ARG2   (arrghs->arg2)
 #define ARG3   (arrghs->arg3)
@@ -481,7 +491,7 @@ static inline UWord getERR ( SyscallStatus* st ) {
 #  define PRA7(s,t,a) PSRAn(7,s,t,a)
 #  define PRA8(s,t,a) PSRAn(8,s,t,a)
 
-#elif defined(VGP_amd64_freebsd)
+#elif defined(VGP_amd64_freebsd) || defined(VGP_amd64_darwin)
    /* Up to 8 parameters, 6 in registers, 2 on the stack. */
    /* or 7 in registers and 3 on the stack */
 #  define PRA1(s,t,a) PRRAn(1,s,t,a)
@@ -499,6 +509,17 @@ static inline UWord getERR ( SyscallStatus* st ) {
 #  define PRA7(s,t,a) PSRAn(7,s,t,a)
 #  define PRA8(s,t,a) PSRAn(8,s,t,a)
 
+#elif defined(VGP_arm64_freebsd)
+   /* Up to 7 parameters, all in registers. */
+#  define PRA1(s,t,a) PRRAn(1,s,t,a)
+#  define PRA2(s,t,a) PRRAn(2,s,t,a)
+#  define PRA3(s,t,a) PRRAn(3,s,t,a)
+#  define PRA4(s,t,a) PRRAn(4,s,t,a)
+#  define PRA5(s,t,a) PRRAn(5,s,t,a)
+#  define PRA6(s,t,a) PRRAn(6,s,t,a)
+#  define PRA7(s,t,a) PRRAn(7,s,t,a)
+#  define PRA8(s,t,a) PRRAn(8,s,t,a)
+
 #elif defined(VGP_x86_darwin) || defined(VGP_x86_solaris)
    /* Up to 8 parameters, all on the stack. */
 #  define PRA1(s,t,a) PSRAn(1,s,t,a)
@@ -510,7 +531,7 @@ static inline UWord getERR ( SyscallStatus* st ) {
 #  define PRA7(s,t,a) PSRAn(7,s,t,a)
 #  define PRA8(s,t,a) PSRAn(8,s,t,a)
 
-#elif defined(VGP_amd64_darwin) || defined(VGP_amd64_solaris)
+#elif defined(VGP_amd64_solaris)
    /* Up to 8 parameters, 6 in registers, 2 on the stack. */
 #  define PRA1(s,t,a) PRRAn(1,s,t,a)
 #  define PRA2(s,t,a) PRRAn(2,s,t,a)

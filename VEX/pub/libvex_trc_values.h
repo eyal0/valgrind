@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -76,6 +76,8 @@
                                       before continuing */
 #define VEX_TRC_JMP_NODECODE   69  /* next instruction is not decodable */
 #define VEX_TRC_JMP_MAPFAIL    71  /* address translation failed */
+
+#define VEX_TRC_JMP_EXTENSION 114  /* invoke extension before continuing */
 
 #define VEX_TRC_JMP_SYS_SYSCALL  73 /* do syscall before continuing */
 #define VEX_TRC_JMP_SYS_INT32    75 /* do syscall before continuing */

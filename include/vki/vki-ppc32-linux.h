@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -314,7 +314,8 @@ struct vki_sigcontext {
 #define VKI_O_TRUNC		01000		/* not fcntl */
 #define VKI_O_APPEND		02000
 #define VKI_O_NONBLOCK		04000
-#define VKI_O_LARGEFILE     0200000
+#define VKI_O_DIRECT          0400000
+#define VKI_O_LARGEFILE       0200000
 
 #define VKI_AT_FDCWD            -100
 

@@ -12,7 +12,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -113,7 +113,6 @@ static VgSchedReturnCode thread_wrapper(Word /*ThreadId*/ tidW)
    /* Return to caller, still holding the lock. */
    return ret;
 }
-
 
 /* ---------------------------------------------------------------------
    clone-related stuff
@@ -309,6 +308,16 @@ static void run_a_thread_NORETURN ( Word tidW )
          : "=m" (tst->status)
          : "r" (VgTs_Empty), "n" (__NR_exit), "m" (tst->os_state.exitcode)
          : "memory" , "$t4", "$a0"
+      );
+#elif defined(VGP_riscv64_linux)
+      asm volatile (
+         "sw   %1, %0\n"      /* set tst->status = VgTs_Empty */
+         "li   a7, %2\n"      /* set a7 = __NR_exit */
+         "ld   a0, %3\n"      /* set a0 = tst->os_state.exitcode */
+         "ecall\n"            /* exit(tst->os_state.exitcode) */
+         : "=m" (tst->status)
+         : "r" (VgTs_Empty), "n" (__NR_exit), "m" (tst->os_state.exitcode)
+         : "a7", "a0"
       );
 #else
 # error Unknown platform
@@ -535,6 +544,13 @@ static SysRes clone_new_thread ( Word (*fn)(void *),
       (ML_(start_thread_NORETURN), stack, flags, ctst,
        child_tidptr, parent_tidptr, NULL);
    res = VG_ (mk_SysRes_nanomips_linux) (ret);
+#elif defined(VGP_riscv64_linux)
+   ULong a0;
+   ctst->arch.vex.guest_x10 = 0;
+   a0 = do_syscall_clone_riscv64_linux
+      (ML_(start_thread_NORETURN), stack, flags, ctst,
+       child_tidptr, parent_tidptr, NULL);
+   res = VG_(mk_SysRes_riscv64_linux)( a0 );
 #else
 # error Unknown platform
 #endif
@@ -560,7 +576,7 @@ static SysRes setup_child_tls (ThreadId ctid, Addr tlsaddr)
 {
    static const Bool debug = False;
    ThreadState* ctst = VG_(get_ThreadState)(ctid);
-   // res is succesful by default, overriden if a real syscall is needed/done.
+   // res is successful by default, overriden if a real syscall is needed/done.
    SysRes res = VG_(mk_SysRes_Success)(0);
 
    if (debug)
@@ -597,6 +613,8 @@ static SysRes setup_child_tls (ThreadId ctid, Addr tlsaddr)
 #elif defined(VGP_mips32_linux) || defined(VGP_nanomips_linux)
    ctst->arch.vex.guest_ULR = tlsaddr;
    ctst->arch.vex.guest_r27 = tlsaddr;
+#elif defined(VGP_riscv64_linux)
+   ctst->arch.vex.guest_x4 = tlsaddr;
 #else
 # error Unknown platform
 #endif
@@ -755,7 +773,7 @@ static SysRes ML_(do_fork_clone) ( ThreadId tid, UInt flags,
     || defined(VGP_ppc64be_linux) || defined(VGP_ppc64le_linux)	\
     || defined(VGP_arm_linux) || defined(VGP_mips32_linux) \
     || defined(VGP_mips64_linux) || defined(VGP_arm64_linux) \
-    || defined(VGP_nanomips_linux)
+    || defined(VGP_nanomips_linux) || defined(VGP_riscv64_linux)
    res = VG_(do_syscall5)( __NR_clone, flags, 
                            (UWord)NULL, (UWord)parent_tidptr, 
                            (UWord)NULL, (UWord)child_tidptr );
@@ -823,7 +841,7 @@ PRE(sys_clone)
     || defined(VGP_ppc64be_linux) || defined(VGP_ppc64le_linux)	\
     || defined(VGP_arm_linux) || defined(VGP_mips32_linux) \
     || defined(VGP_mips64_linux) || defined(VGP_arm64_linux) \
-    || defined(VGP_nanomips_linux)
+    || defined(VGP_nanomips_linux) || defined(VGP_riscv64_linux)
 #define ARG_CHILD_TIDPTR ARG5
 #define PRA_CHILD_TIDPTR PRA5
 #define ARG_TLS          ARG4
@@ -936,8 +954,17 @@ PRE(sys_clone)
                    "x\n", ARG_FLAGS);
       VG_(message)(Vg_UserMsg, "\n");
       VG_(message)(Vg_UserMsg, "The only supported clone() uses are:\n");
-      VG_(message)(Vg_UserMsg, " - via a threads library (LinuxThreads or NPTL)\n");
-      VG_(message)(Vg_UserMsg, " - via the implementation of fork or vfork\n");
+      VG_(message)(Vg_UserMsg,
+                   " - via a threads library (VM, FS and FILES flags set)\n");
+      VG_(message)(Vg_UserMsg,
+                   " - via the implementation of vfork (VFORK or VFORK and VM flags set)\n");
+      VG_(message)(Vg_UserMsg,
+                   " - via plain fork (no VM, FS, FILES, VFORK flags set)\n");
+      VG_(message)(Vg_UserMsg, " clone call had %s%s%s%sflags set\n",
+                   cloneflags & VKI_CLONE_VM ? "CLONE_VM " : "",
+                   cloneflags & VKI_CLONE_FS ? "CLONE_FS " : "",
+                   cloneflags & VKI_CLONE_FILES ? "CLONE_FILES " : "",
+                   cloneflags & VKI_CLONE_VFORK ? "CLONE_VFORK " : "");
       VG_(unimplemented)
          ("Valgrind does not support general clone().");
    }
@@ -981,7 +1008,8 @@ PRE(sys_mount)
 {
    // Nb: depending on 'flags', the 'type' and 'data' args may be ignored.
    // We are conservative and check everything, except the memory pointed to
-   // by 'data'.
+   // by 'data'. And since both 'source' and 'type' may be ignored, we allow
+   // them to be NULL.
    *flags |= SfMayBlock;
    PRINT("sys_mount( %#" FMT_REGWORD "x(%s), %#" FMT_REGWORD "x(%s), %#"
          FMT_REGWORD "x(%s), %#" FMT_REGWORD "x, %#" FMT_REGWORD "x )",
@@ -993,7 +1021,20 @@ PRE(sys_mount)
    if (ARG1)
       PRE_MEM_RASCIIZ( "mount(source)", ARG1);
    PRE_MEM_RASCIIZ( "mount(target)", ARG2);
-   PRE_MEM_RASCIIZ( "mount(type)", ARG3);
+   if (ARG3)
+      PRE_MEM_RASCIIZ( "mount(type)", ARG3);
+}
+
+PRE(sys_mount_setattr)
+{
+   // int syscall(SYS_mount_setattr, int dirfd, const char *pathname,
+   //             unsigned int flags, struct mount_attr *attr, size_t size);
+   *flags |= SfMayBlock;
+   PRINT("sys_mount_setattr ( %d, %#" FMT_REGWORD "x, %" FMT_REGWORD "u, %#"
+         FMT_REGWORD "x, %" FMT_REGWORD "u )", (Int)ARG1, ARG2,
+         ARG3, ARG4, ARG5);
+   PRE_MEM_READ("mount(attr)", ARG5, ARG6);
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "mount_setattr(dirfd)", tid, status);
 }
 
 PRE(sys_oldumount)
@@ -1624,6 +1665,13 @@ POST(sys_sendfile64)
    }
 }
 
+PRE(sys_setdomainname)
+{
+   PRINT ("sys_setdomainname ( %#" FMT_REGWORD "x, %ld )", ARG1, SARG2);
+   PRE_REG_READ2 (long, "setdomainname", const void *, name, int, len);
+   PRE_MEM_READ("setdomainname(name)", ARG1, ARG2);
+}
+
 static void pre_read_timespec64 (ThreadId tid, const char *msg, UWord arg)
 {
    struct vki_timespec64 *ts64 = (void *)(Addr)arg;
@@ -1825,6 +1873,18 @@ POST(sys_futex_time64)
   futex_post_helper (tid, arrghs, status);
 }
 
+PRE(sys_futex_waitv)
+{
+    /* asmlinkage long sys_futex_waitv(struct futex_waitv __user *waiters,
+     *                                 unsigned int nr_futexes, unsigned int flags,
+     *                                 struct __kernel_timespec __user *timeout, clockid_t clockid); */
+    *flags |= SfMayBlock;
+    PRINT("sys_futex_waitv ( %#" FMT_REGWORD "x, %ld, %ld, %#" FMT_REGWORD "x, %" FMT_REGWORD "d )",
+          ARG1, SARG2, SARG3, ARG4, SARG5);
+    PRE_MEM_READ("sys_futex_waitv(waiters)", ARG1, sizeof(struct vki_futex_waitv) * ARG2);
+    PRE_MEM_READ("sys_futex_waitv(timeout)", ARG4, sizeof(struct vki__kernel_timespec));
+}
+
 PRE(sys_set_robust_list)
 {
    PRINT("sys_set_robust_list ( %#" FMT_REGWORD "x, %"
@@ -1959,6 +2019,33 @@ POST(sys_pselect6_time64)
    }
 }
 
+static void blocking_syscall_sigmask_pre ( ThreadId tid,
+                                           Addr *sig_p, vki_size_t sigsz,
+                                           const HChar *sig_mem_name,
+                                           const HChar *malloc_str )
+{
+   if (*sig_p != 0 && sigsz == sizeof(vki_sigset_t)) {
+      const vki_sigset_t *guest_sigmask = (vki_sigset_t *) *sig_p;
+      PRE_MEM_READ(sig_mem_name, *sig_p, sigsz);
+      if (!ML_(safe_to_deref)(guest_sigmask, sizeof(*guest_sigmask))) {
+         *sig_p = 1; /* Something recognizable to PST() hook. */
+      } else {
+         vki_sigset_t *vg_sigmask =
+            VG_(malloc)(malloc_str, sizeof(*vg_sigmask));
+         *sig_p = (Addr)vg_sigmask;
+         *vg_sigmask = *guest_sigmask;
+         VG_(sanitize_client_sigmask)(vg_sigmask);
+      }
+   }
+}
+
+static void blocking_syscall_sigmask_post ( Addr sig, vki_size_t sigsz )
+{
+   if (sig != 0 && sigsz == sizeof(vki_sigset_t) && sig != 1) {
+      VG_(free)((vki_sigset_t *)sig);
+   }
+}
+
 static void ppoll_pre_helper ( ThreadId tid, SyscallArgLayout* layout,
                                SyscallArgs* arrghs, SyscallStatus* status,
                                UWord* flags, Bool is_time64 )
@@ -1984,6 +2071,8 @@ static void ppoll_pre_helper ( ThreadId tid, SyscallArgLayout* layout,
    for (i = 0; i < ARG2; i++) {
       PRE_MEM_READ( "ppoll(ufds.fd)",
                     (Addr)(&ufds[i].fd), sizeof(ufds[i].fd) );
+      if (!ML_(safe_to_deref)(&ufds[i].fd, sizeof(ufds[i].fd)))
+         break;
       if (ufds[i].fd >= 0) {
          PRE_MEM_READ( "ppoll(ufds.events)",
                        (Addr)(&ufds[i].events), sizeof(ufds[i].events) );
@@ -2000,19 +2089,9 @@ static void ppoll_pre_helper ( ThreadId tid, SyscallArgLayout* layout,
                        sizeof(struct vki_timespec) );
       }
    }
-   if (ARG4 != 0 && sizeof(vki_sigset_t) == ARG5) {
-      const vki_sigset_t *guest_sigmask = (vki_sigset_t *)(Addr)ARG4;
-      PRE_MEM_READ( "ppoll(sigmask)", ARG4, ARG5);
-      if (!ML_(safe_to_deref)(guest_sigmask, sizeof(*guest_sigmask))) {
-         ARG4 = 1; /* Something recognisable to POST() hook. */
-      } else {
-         vki_sigset_t *vg_sigmask =
-             VG_(malloc)("syswrap.ppoll.1", sizeof(*vg_sigmask));
-         ARG4 = (Addr)vg_sigmask;
-         *vg_sigmask = *guest_sigmask;
-         VG_(sanitize_client_sigmask)(vg_sigmask);
-      }
-   }
+   blocking_syscall_sigmask_pre(tid, (Addr *)&ARG4, ARG5,
+                                "ppoll(sigmask)",
+                                "syswrap.ppoll.1");
 }
 
 static void ppoll_post_helper ( ThreadId tid, SyscallArgs* arrghs,
@@ -2025,9 +2104,7 @@ static void ppoll_post_helper ( ThreadId tid, SyscallArgs* arrghs,
       for (i = 0; i < ARG2; i++)
 	 POST_MEM_WRITE( (Addr)(&ufds[i].revents), sizeof(ufds[i].revents) );
    }
-   if (ARG4 != 0 && ARG5 == sizeof(vki_sigset_t) && ARG4 != 1) {
-      VG_(free)((vki_sigset_t *) (Addr)ARG4);
-   }
+   blocking_syscall_sigmask_post((Addr)ARG4, ARG5);
 }
 
 PRE(sys_ppoll)
@@ -2056,6 +2133,19 @@ POST(sys_ppoll_time64)
    ppoll_post_helper (tid, arrghs, status);
 }
 
+PRE(sys_swapon)
+{
+   PRINT("sys_swapon ( %#lx, %#lx )", ARG1, ARG2);
+   PRE_REG_READ2(long, "swapon", const void *, path, int, flags);
+   PRE_MEM_RASCIIZ( "swapon(path)", ARG1);
+}
+
+PRE(sys_swapoff)
+{
+   PRINT("sys_swapoff ( %#lx )", ARG1);
+   PRE_REG_READ1(long, "swapoff", const void *, path);
+   PRE_MEM_RASCIIZ( "swapoff(path)", ARG1);
+}
 
 /* ---------------------------------------------------------------------
    epoll_* wrappers
@@ -2069,6 +2159,7 @@ PRE(sys_epoll_create)
 POST(sys_epoll_create)
 {
    vg_assert(SUCCESS);
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "epoll_create", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -2086,6 +2177,7 @@ PRE(sys_epoll_create1)
 POST(sys_epoll_create1)
 {
    vg_assert(SUCCESS);
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "epoll_create1", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -2149,7 +2241,7 @@ POST(sys_epoll_wait)
 
 PRE(sys_epoll_pwait)
 {
-   *flags |= SfMayBlock;
+   *flags |= SfMayBlock | SfPostOnFail;
    PRINT("sys_epoll_pwait ( %ld, %#" FMT_REGWORD "x, %ld, %ld, %#"
           FMT_REGWORD "x, %" FMT_REGWORD "u )",
          SARG1, ARG2, SARG3, SARG4, ARG5, ARG6);
@@ -2159,12 +2251,15 @@ PRE(sys_epoll_pwait)
                  vki_size_t, sigsetsize);
    /* Assume all (maxevents) events records should be (fully) writable. */
    PRE_MEM_WRITE( "epoll_pwait(events)", ARG2, sizeof(struct vki_epoll_event)*ARG3);
-   if (ARG5)
-      PRE_MEM_READ( "epoll_pwait(sigmask)", ARG5, sizeof(vki_sigset_t) );
+   blocking_syscall_sigmask_pre(tid, (Addr *)&ARG5, ARG6,
+                                "epoll_pwait(sigmask)",
+                                "syswrap.epoll_pwait.1");
 }
 POST(sys_epoll_pwait)
 {
-   epoll_post_helper (tid, arrghs, status);
+   if (SUCCESS)
+      epoll_post_helper (tid, arrghs, status);
+   blocking_syscall_sigmask_post((Addr) ARG5, ARG6);
 }
 
 PRE(sys_epoll_pwait2)
@@ -2190,6 +2285,19 @@ POST(sys_epoll_pwait2)
    epoll_post_helper (tid, arrghs, status);
 }
 
+PRE(sys_remap_file_pages)
+{
+   /* int remap_file_pages(void addr[.size], size_t size,
+                           int prot, size_t pgoff, int flags); */
+   Int arg_3 = (Int) ARG3;
+   Int arg_5 = (Int) ARG5;
+   PRINT("sys_remap_file_pages ( %#" FMT_REGWORD "x, %lu, %d, %lu, %d",
+         ARG1, ARG2, arg_3, ARG4, arg_5);
+   PRE_REG_READ5(int, "remap_file_pages", void *, addr, vki_size_t,
+                 size_t, int, prot, vki_size_t, pgoff, int, flags);
+   PRE_MEM_READ("sys_remap_file_pages(addr)", ARG1, ARG2);
+}
+
 PRE(sys_eventfd)
 {
    PRINT("sys_eventfd ( %" FMT_REGWORD "u )", ARG1);
@@ -2197,6 +2305,7 @@ PRE(sys_eventfd)
 }
 POST(sys_eventfd)
 {
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "eventfd", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -2213,6 +2322,7 @@ PRE(sys_eventfd2)
 }
 POST(sys_eventfd2)
 {
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "eventfd2", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -2252,10 +2362,18 @@ PRE(sys_prlimit64)
                  vki_pid_t, pid, unsigned int, resource,
                  const struct rlimit64 *, new_rlim,
                  struct rlimit64 *, old_rlim);
-   if (ARG3)
+   if (ARG3) {
       PRE_MEM_READ( "rlimit64(new_rlim)", ARG3, sizeof(struct vki_rlimit64) );
-   if (ARG4)
+   }
+   if (ARG4) {
       PRE_MEM_WRITE( "rlimit64(old_rlim)", ARG4, sizeof(struct vki_rlimit64) );
+   }
+
+   if ((ARG3 && !ML_(safe_to_deref)((void*)(Addr)ARG3, sizeof(struct vki_rlimit64)))
+       || (ARG4 && !ML_(safe_to_deref)((void*)(Addr)ARG4, sizeof(struct vki_rlimit64)))) {
+      SET_STATUS_Failure(VKI_EFAULT);
+      return;
+   }
 
    if (ARG3 &&
        ((struct vki_rlimit64 *)(Addr)ARG3)->rlim_cur
@@ -2454,6 +2572,8 @@ PRE(sys_fadvise64)
    PRE_REG_READ5(long, "fadvise64",
                  int, fd, vki_u32, MERGE64_FIRST(offset), vki_u32, MERGE64_SECOND(offset),
                  vki_size_t, len, int, advice);
+   if ( !ML_(fd_allowed)(SARG1, "fadvise64", tid, False) )
+      SET_STATUS_Failure( VKI_EBADF );
 }
 
 PRE(sys_fadvise64_64)
@@ -2463,6 +2583,8 @@ PRE(sys_fadvise64_64)
    PRE_REG_READ6(long, "fadvise64_64",
                  int, fd, vki_u32, MERGE64_FIRST(offset), vki_u32, MERGE64_SECOND(offset),
                  vki_u32, MERGE64_FIRST(len), vki_u32, MERGE64_SECOND(len), int, advice);
+   if ( !ML_(fd_allowed)(SARG1, "fadvise64_64", tid, False) )
+      SET_STATUS_Failure( VKI_EBADF );
 }
 
 /* ---------------------------------------------------------------------
@@ -2532,32 +2654,49 @@ PRE(sys_io_destroy)
    }  
 }  
 
+static
+void common_pre_io_getevents(ThreadId tid, UWord a1, UWord a2, UWord a3, UWord a4, UWord a5, UWord a6, UWord* flags, const HChar* function_name)
+{
+   HChar buf[25];
+   *flags |= SfMayBlock;
+   PRINT("sys_%s ( %llu, %lld, %lld, %#" FMT_REGWORD "x, %#"
+         FMT_REGWORD "x )", function_name,
+         (ULong)a1,(Long)a2,(Long)a3,a4,a5);
+   if (a3 > 0) {
+      VG_(snprintf)(buf, 25, "%s(events)", function_name);
+      PRE_MEM_WRITE( buf, a4, sizeof(struct vki_io_event)*a3 );
+   }
+   if (a5 != 0) {
+      VG_(snprintf)(buf, 25, "%s(timeout)", function_name);
+      PRE_MEM_READ( buf, a5, sizeof(struct vki_timespec));
+   }
+
+   if (a6 != 0) {
+      // only for io_pgetevents
+      PRE_MEM_READ("io_pgetevents(usig)",
+                   a6, sizeof(struct vki__aio_sigset));
+   }
+}
+
 PRE(sys_io_getevents)
 {
-   *flags |= SfMayBlock;
-   PRINT("sys_io_getevents ( %llu, %lld, %lld, %#" FMT_REGWORD "x, %#"
-         FMT_REGWORD "x )",
-         (ULong)ARG1,(Long)ARG2,(Long)ARG3,ARG4,ARG5);
    PRE_REG_READ5(long, "io_getevents",
                  vki_aio_context_t, ctx_id, long, min_nr, long, nr,
                  struct io_event *, events,
                  struct timespec *, timeout);
-   if (ARG3 > 0)
-      PRE_MEM_WRITE( "io_getevents(events)",
-                     ARG4, sizeof(struct vki_io_event)*ARG3 );
-   if (ARG5 != 0)
-      PRE_MEM_READ( "io_getevents(timeout)",
-                    ARG5, sizeof(struct vki_timespec));
+   common_pre_io_getevents(tid, ARG1, ARG2, ARG3, ARG4, ARG5, 0U, flags, "io_getevents");
 }
-POST(sys_io_getevents)
+
+static
+void common_post_sys_io_events(ThreadId tid, UWord a4, SyscallStatus* status, const HChar* function_name)
 {
    Int i;
    vg_assert(SUCCESS);
    if (RES > 0) {
-      POST_MEM_WRITE( ARG4, sizeof(struct vki_io_event)*RES );
+      POST_MEM_WRITE( a4, sizeof(struct vki_io_event)*RES );
       for (i = 0; i < RES; i++) {
          const struct vki_io_event *vev =
-            ((struct vki_io_event *)(Addr)ARG4) + i;
+            ((struct vki_io_event *)(Addr)a4) + i;
          const struct vki_iocb *cb = (struct vki_iocb *)(Addr)vev->obj;
 
          switch (cb->aio_lio_opcode) {
@@ -2576,32 +2715,38 @@ POST(sys_io_getevents)
             break;
 
          case VKI_IOCB_CMD_PREADV:
-	     if (vev->result > 0) {
-                  struct vki_iovec * vec = (struct vki_iovec *)(Addr)cb->aio_buf;
-                  Int remains = vev->result;
-                  Int j;
+            if (vev->result > 0) {
+               struct vki_iovec * vec = (struct vki_iovec *)(Addr)cb->aio_buf;
+               Int remains = vev->result;
+                Int j;
 
-                  for (j = 0; j < cb->aio_nbytes; j++) {
-                       Int nReadThisBuf = vec[j].iov_len;
-                       if (nReadThisBuf > remains) nReadThisBuf = remains;
-                       POST_MEM_WRITE( (Addr)vec[j].iov_base, nReadThisBuf );
-                       remains -= nReadThisBuf;
-                       if (remains < 0) VG_(core_panic)("io_getevents(PREADV): remains < 0");
-                  }
-	     }
-             break;
+               for (j = 0; j < cb->aio_nbytes; j++) {
+                   Int nReadThisBuf = vec[j].iov_len;
+                  if (nReadThisBuf > remains) nReadThisBuf = remains;
+                  POST_MEM_WRITE( (Addr)vec[j].iov_base, nReadThisBuf );
+                  remains -= nReadThisBuf;
+                  if (remains < 0) VG_(core_panic)("io_getevents(PREADV): remains < 0");
+               }
+            }
+            break;
 
          case VKI_IOCB_CMD_PWRITEV:
              break;
 
          default:
             VG_(message)(Vg_DebugMsg,
-                        "Warning: unhandled io_getevents opcode: %u\n",
+                        "Warning: unhandled %s opcode: %u\n",
+                        function_name,
                         cb->aio_lio_opcode);
             break;
          }
       }
    }
+}
+
+POST(sys_io_getevents)
+{
+   common_post_sys_io_events(tid, ARG4, status, "io_getevents");
 }
 
 PRE(sys_io_submit)
@@ -2614,12 +2759,15 @@ PRE(sys_io_submit)
                  vki_aio_context_t, ctx_id, long, nr,
                  struct iocb **, iocbpp);
    PRE_MEM_READ( "io_submit(iocbpp)", ARG3, ARG2*sizeof(struct vki_iocb *) );
-   if (ARG3 != 0) {
+   if (ML_(safe_to_deref)((void *)(Addr)ARG3, ARG2*sizeof(struct vki_iocb *))) {
       for (i = 0; i < ARG2; i++) {
          struct vki_iocb *cb = ((struct vki_iocb **)(Addr)ARG3)[i];
          struct vki_iovec *iov;
 
          PRE_MEM_READ( "io_submit(iocb)", (Addr)cb, sizeof(struct vki_iocb) );
+         if (!ML_(safe_to_deref)(&cb->aio_lio_opcode,
+                                 sizeof(cb->aio_lio_opcode)))
+            continue;
          switch (cb->aio_lio_opcode) {
          case VKI_IOCB_CMD_PREAD:
             PRE_MEM_WRITE( "io_submit(PREAD)", cb->aio_buf, cb->aio_nbytes );
@@ -2739,6 +2887,7 @@ PRE(sys_fanotify_init)
 
 POST(sys_fanotify_init)
 {
+   POST_newFd_RES;
    vg_assert(SUCCESS);
    if (!ML_(fd_allowed)(RES, "fanotify_init", tid, True)) {
       VG_(close)(RES);
@@ -2773,6 +2922,9 @@ PRE(sys_fanotify_mark)
 #else
 #  error Unexpected word size
 #endif
+    if ( !ML_(fd_allowed)(SARG1, "fanotify_mark(fanotify_fd)", tid, False) )
+       SET_STATUS_Failure( VKI_EBADF );
+    ML_(fd_at_check_allowed)(SARG4, (const HChar*)ARG5, "fanotify_mark(dirfd)", tid, status);
 }
 
 /* ---------------------------------------------------------------------
@@ -2787,6 +2939,7 @@ PRE(sys_inotify_init)
 POST(sys_inotify_init)
 {
    vg_assert(SUCCESS);
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "inotify_init", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -2805,6 +2958,7 @@ PRE(sys_inotify_init1)
 POST(sys_inotify_init1)
 {
    vg_assert(SUCCESS);
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "inotify_init", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -2851,6 +3005,7 @@ PRE(sys_mq_open)
 POST(sys_mq_open)
 {
    vg_assert(SUCCESS);
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "mq_open", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -3226,6 +3381,7 @@ PRE(sys_timer_delete)
 {
    PRINT("sys_timer_delete( %#" FMT_REGWORD "x )", ARG1);
    PRE_REG_READ1(long, "timer_delete", vki_timer_t, timerid);
+   *flags |= SfPollAfter;
 }
 
 /* ---------------------------------------------------------------------
@@ -3280,6 +3436,7 @@ PRE(sys_timerfd_create)
 }
 POST(sys_timerfd_create)
 {
+   POST_newFd_RES;
    if (linux_kernel_2_6_22())
    {
       /* 2.6.22 kernel: timerfd system call. */
@@ -3522,6 +3679,9 @@ PRE(sys_fchown16)
          FMT_REGWORD "u )", ARG1, ARG2, ARG3);
    PRE_REG_READ3(long, "fchown16",
                  unsigned int, fd, vki_old_uid_t, owner, vki_old_gid_t, group);
+   if ( !ML_(fd_allowed)(ARG1, "fchown16", tid, False) )
+      SET_STATUS_Failure( VKI_EBADF );
+
 }
 
 /* ---------------------------------------------------------------------
@@ -3616,6 +3776,9 @@ PRE(sys_fgetxattr)
                  int, fd, char *, name, void *, value, vki_size_t, size);
    PRE_MEM_RASCIIZ( "fgetxattr(name)", ARG2 );
    PRE_MEM_WRITE( "fgetxattr(value)", ARG3, ARG4 );
+   if ( !ML_(fd_allowed)(SARG1, "fgetxattr", tid, False) )
+     SET_STATUS_Failure( VKI_EBADF );
+
 }
 POST(sys_fgetxattr)
 {
@@ -3663,6 +3826,9 @@ PRE(sys_flistxattr)
    PRE_REG_READ3(ssize_t, "flistxattr",
                  int, fd, char *, list, vki_size_t, size);
    PRE_MEM_WRITE( "flistxattr(list)", ARG2, ARG3 );
+   if ( !ML_(fd_allowed)(ARG1, "flistxattr", tid, False) )
+     SET_STATUS_Failure( VKI_EBADF );
+
 }
 POST(sys_flistxattr)
 {
@@ -3696,6 +3862,9 @@ PRE(sys_fremovexattr)
    PRINT("sys_fremovexattr ( %ld, %#" FMT_REGWORD "x )", SARG1, ARG2);
    PRE_REG_READ2(long, "fremovexattr", int, fd, char *, name);
    PRE_MEM_RASCIIZ( "fremovexattr(name)", ARG2 );
+   if ( !ML_(fd_allowed)(SARG1, "fremovexattr", tid, False) )
+     SET_STATUS_Failure( VKI_EBADF );
+
 }
 
 /* ---------------------------------------------------------------------
@@ -3956,14 +4125,147 @@ POST(sys_dup3)
       ML_(record_fd_open_named)(tid, RES);
 }
 
+static
+void common_pre_quotactl_p4_check(ThreadId tid, Int subop, Int a4, SyscallStatus* status, const HChar* function_name)
+{
+   HChar buf[25];
+   VG_(snprintf)(buf, sizeof(buf), "%s(addr)", function_name);
+   switch (subop) {
+      case VKI_Q_QUOTAON:
+         // The addr argument points to the pathname of a file
+         // containing the quotas for the filesystem.
+         PRE_MEM_RASCIIZ( buf, a4 );
+         break;
+      case VKI_Q_QUOTAOFF:
+         // The addr and id arguments are ignored.
+         break;
+      case VKI_Q_GETQUOTA:
+         // Get disk quota limits and current usage for user or group id.  The
+         // addr argument is a pointer to a dqblk structure defined in
+         // <sys/quota.h> as follows:
+         if (a4 != 0)
+            PRE_MEM_WRITE(buf, a4, sizeof(struct vki_dqblk));
+         break;
+      case VKI_Q_GETNEXTQUOTA:
+         // The addr argument is a pointer to a nextdqblk structure
+         // whose fields are as for the dqblk, except for the addition
+         // of a dqb_id field that is used to return the ID for which
+         // quota information is being returned:
+         if (a4 != 0)
+            PRE_MEM_WRITE(buf, a4, sizeof(struct vki_nextdqblk));
+         break;
+      case VKI_Q_SETQUOTA:
+         // Set quota information for user or group id, using the
+         // information supplied in the dqblk structure pointed to by
+         // addr.
+         if (a4 != 0)
+            PRE_MEM_READ(buf, a4, sizeof(struct vki_dqblk));
+         break;
+      case VKI_Q_GETINFO:
+         // The addr argument should be a pointer to a dqinfo structure.
+         if (a4 != 0)
+            PRE_MEM_WRITE(buf, a4, sizeof(struct vki_dqinfo));
+         break;
+      case VKI_Q_SETINFO:
+         // The addr argument should be a pointer to a dqinfo structure
+         if (a4 != 0)
+            PRE_MEM_READ(buf, a4, sizeof(struct vki_dqinfo));
+         break;
+      case VKI_Q_GETFMT:
+         // The addr argument should be a pointer to a 4-byte buffer where the
+         // format number will be stored.
+         if (a4 != 0)
+            PRE_MEM_WRITE(buf, a4, 4);
+         break;
+      case VKI_Q_SYNC:
+         // The addr and id arguments are ignored.
+         break;
+      // case VKI_Q_GETSTATS: was only supported up to Linux 2.4.21 - skipping)
+      default:
+         return;
+   }
+}
+
+static
+void common_post_quotactl_p4_check(ThreadId tid, Int subop, Int a4, const HChar* function_name)
+{
+   switch (subop) {
+      case VKI_Q_GETQUOTA:
+         // Get disk quota limits and current usage for user or group id.  The
+         // addr argument is a pointer to a dqblk structure defined in
+         // <sys/quota.h> as follows:
+         if (a4 != 0)
+            POST_MEM_WRITE(a4, sizeof(struct vki_dqblk));
+         break;
+      case VKI_Q_GETNEXTQUOTA:
+         // The addr argument is a pointer to a nextdqblk structure
+         // whose fields are as for the dqblk, except for the addition
+         // of a dqb_id field that is used to return the ID for which
+         // quota information is being returned:
+         if (a4 != 0)
+            POST_MEM_WRITE(a4, sizeof(struct vki_nextdqblk));
+         break;
+      case VKI_Q_GETINFO:
+         // The addr argument should be a pointer to a dqinfo structure.
+         if (a4 != 0)
+            POST_MEM_WRITE(a4, sizeof(struct vki_dqinfo));
+         break;
+      case VKI_Q_GETFMT:
+         // The addr argument should be a pointer to a 4-byte buffer where the
+         // format number will be stored.
+         if (a4 != 0)
+            POST_MEM_WRITE(a4, 4);
+         break;
+      // case VKI_Q_GETSTATS: was only supported up to Linux 2.4.21 - skipping)
+      default:
+         return;
+   }
+}
+
+
 PRE(sys_quotactl)
 {
+   // SYSCALL_DEFINE4(quotactl,
+   //                 unsigned int, cmd,
+   //                 const char __user *, special,
+   //                 qid_t, id,
+   //                 void __user *, addr)
+   Int subop = ARG1 >> VKI_SUBCMDSHIFT;
    PRINT("sys_quotactl (0x%" FMT_REGWORD "x, %#" FMT_REGWORD "x, 0x%"
          FMT_REGWORD "x, 0x%" FMT_REGWORD "x )", ARG1, ARG2, ARG3, ARG4);
    PRE_REG_READ4(long, "quotactl",
                  unsigned int, cmd, const char *, special, vki_qid_t, id,
                  void *, addr);
    PRE_MEM_RASCIIZ( "quotactl(special)", ARG2 );
+   common_pre_quotactl_p4_check(tid, subop, ARG4, status, "quotactl");
+}
+POST(sys_quotactl)
+{
+   Int subop = ARG1 >> VKI_SUBCMDSHIFT;
+   common_post_quotactl_p4_check(tid, subop, ARG4, "quotactl");
+}
+
+PRE(sys_quotactl_fd)
+{
+   // SYSCALL_DEFINE4(quotactl_fd,
+   //     unsigned int, fd,
+   //     unsigned int, cmd,
+   //     qid_t, id,
+   //     void __user *, addr)
+   Int subop = ARG2 >> VKI_SUBCMDSHIFT;
+   PRINT("sys_quotactl_fd (0x%" FMT_REGWORD "x, 0x%#" FMT_REGWORD "x, 0x%"
+         FMT_REGWORD "x, 0x%" FMT_REGWORD "x )", ARG1, ARG2, ARG3, ARG4);
+   PRE_REG_READ4(long, "quotactl_fd",
+                 unsigned int, fd, unsigned int, cmd, vki_qid_t, id,
+                 void *, addr);
+   if (!ML_(fd_allowed)(ARG1, "quotactl_fd", tid, False))
+      SET_STATUS_Failure( VKI_EBADF );
+   common_pre_quotactl_p4_check(tid, subop, ARG4, status, "quotactl_fd");
+}
+POST(sys_quotactl_fd)
+{
+   Int subop = ARG2 >> VKI_SUBCMDSHIFT;
+   common_post_quotactl_p4_check(tid, subop, ARG4, "quotactl_fd");
 }
 
 PRE(sys_waitid)
@@ -3974,13 +4276,15 @@ PRE(sys_waitid)
    PRE_REG_READ5(int32_t, "sys_waitid",
                  int, which, vki_pid_t, pid, struct vki_siginfo *, infop,
                  int, options, struct vki_rusage *, ru);
-   PRE_MEM_WRITE( "waitid(infop)", ARG3, sizeof(struct vki_siginfo) );
+   if (ARG3 != 0)
+      PRE_MEM_WRITE( "waitid(infop)", ARG3, sizeof(struct vki_siginfo) );
    if (ARG5 != 0)
       PRE_MEM_WRITE( "waitid(ru)", ARG5, sizeof(struct vki_rusage) );
 }
 POST(sys_waitid)
 {
-   POST_MEM_WRITE( ARG3, sizeof(struct vki_siginfo) );
+   if (ARG3 != 0)
+      POST_MEM_WRITE( ARG3, sizeof(struct vki_siginfo) );
    if (ARG5 != 0)
       POST_MEM_WRITE( ARG5, sizeof(struct vki_rusage) );
 }
@@ -4041,6 +4345,8 @@ PRE(sys_stime)
 
 PRE(sys_perf_event_open)
 {
+   // int syscall(SYS_perf_event_open, struct perf_event_attr *attr,
+   //             pid_t pid, int cpu, int group_fd, unsigned long flags);
    struct vki_perf_event_attr *attr;
    PRINT("sys_perf_event_open ( %#" FMT_REGWORD "x, %ld, %ld, %ld, %#"
          FMT_REGWORD "x )", ARG1, SARG2, SARG3, SARG4, ARG5);
@@ -4053,11 +4359,19 @@ PRE(sys_perf_event_open)
                  (Addr)&attr->size, sizeof(attr->size) );
    PRE_MEM_READ( "perf_event_open(attr)",
                  (Addr)attr, attr->size );
+   if ((ARG5 & VKI_PERF_FLAG_FD_NO_GROUP) != VKI_PERF_FLAG_FD_NO_GROUP) {
+       if ((Int)SARG4 != -1) {
+          if (!ML_(fd_allowed)(SARG4, "perf_event_open", tid, False)) {
+             SET_STATUS_Failure(VKI_EBADF);
+          }
+       }
+   }
 }
 
 POST(sys_perf_event_open)
 {
    vg_assert(SUCCESS);
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "perf_event_open", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -4136,6 +4450,7 @@ PRE(sys_memfd_create)
 POST(sys_memfd_create)
 {
    vg_assert(SUCCESS);
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "memfd_create", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -4143,6 +4458,55 @@ POST(sys_memfd_create)
       if (VG_(clo_track_fds))
          ML_(record_fd_open_nameless)(tid, RES);
    }
+}
+
+PRE(sys_landlock_create_ruleset)
+{
+   PRINT("sys_landlock_create_ruleset ( %#" FMT_REGWORD "x, %lu, %lu )",
+         ARG1, ARG2, ARG3);
+   PRE_REG_READ3(long, "landlock_create_ruleset",
+                 const struct vki_landlock_ruleset_attr*, attr,
+                 vki_size_t, size, vki_uint32_t, flags);
+   PRE_MEM_READ( "landlock_create_ruleset(value)", ARG1, ARG2 );
+
+   /* XXX Alternatively we could always fail with EOPNOTSUPP
+      since the rules might interfere with valgrind itself.  */
+}
+
+POST(sys_landlock_create_ruleset)
+{
+   /* Returns either the abi version or a file descriptor.  */
+   if (ARG3 != VKI_LANDLOCK_CREATE_RULESET_VERSION) {
+      POST_newFd_RES;
+      if (!ML_(fd_allowed)(RES, "landlock_create_ruleset", tid, True)) {
+         VG_(close)(RES);
+         SET_STATUS_Failure( VKI_EMFILE );
+      } else {
+         if (VG_(clo_track_fds))
+            ML_(record_fd_open_nameless)(tid, RES);
+      }
+   }
+}
+
+PRE(sys_landlock_add_rule)
+{
+   PRINT("sys_landlock_add_rule ( %ld, %lu, %#" FMT_REGWORD "x, %lu )",
+         SARG1, ARG2, ARG3, ARG4);
+   PRE_REG_READ4(long, "landlock_add_rule",
+                 int, ruleset_fd, enum vki_landlock_rule_type, rule_type,
+                 const void*, rule_attr, vki_uint32_t, flags);
+   if (!ML_(fd_allowed)(ARG1, "landlock_add_rule", tid, False))
+      SET_STATUS_Failure(VKI_EBADF);
+   /* XXX Depending on rule_type we should also check the given rule_attr.  */
+}
+
+PRE(sys_landlock_restrict_self)
+{
+   PRINT("sys_landlock_restrict_self ( %ld, %lu )", SARG1, ARG2);
+   PRE_REG_READ2(long, "landlock_create_ruleset",
+                 int, ruleset_fd, vki_uint32_t, flags);
+   if (!ML_(fd_allowed)(ARG1, "landlock_restrict_self", tid, False))
+      SET_STATUS_Failure(VKI_EBADF);
 }
 
 PRE(sys_memfd_secret)
@@ -4154,6 +4518,7 @@ PRE(sys_memfd_secret)
 POST(sys_memfd_secret)
 {
    vg_assert(SUCCESS);
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "memfd_secret", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -4169,11 +4534,211 @@ PRE(sys_membarrier)
    PRE_REG_READ1(int, "membarrier", int, flags);
 }
 
+PRE(sys_mseal)
+{
+    /* int mseal(void *addr, size_t len, unsigned long flags) */
+    PRINT("sys_mseal ( %#" FMT_REGWORD "x, %" FMT_REGWORD "u, %#" FMT_REGWORD "x, )", ARG1, ARG2, ARG3);
+    PRE_REG_READ3(int, "mseal", void *, addr,  vki_size_t, len, int, flags);
+    /* First check for overflow which produces EINVAL.  */
+    if ((Addr)ARG1 > ((SizeT)(-1) - (SizeT)ARG2)) {
+       SET_STATUS_Failure(VKI_EINVAL);
+    } else if (!ML_(valid_client_addr)(ARG1, ARG2, tid, "mseal"))
+       SET_STATUS_Failure(VKI_ENOMEM);
+}
+
+PRE(sys_statmount)
+{
+   // int syscall(SYS_statmount, struct mnt_id_req *req,
+   //             struct statmount *smbuf, size_t bufsize,
+   //             unsigned long flags);
+   FUSE_COMPATIBLE_MAY_BLOCK();
+   PRINT("sys_statmount ( %#" FMT_REGWORD "x, %#" FMT_REGWORD "x, %lu,  %#" FMT_REGWORD "x)", ARG1, ARG2, ARG3, ARG4);
+   PRE_REG_READ4(long, "statmount", struct vki_mnt_id_req *, req, struct vki_statmount *, smbuf, vki_size_t, bufsize, unsigned long, flags);
+
+   struct vki_mnt_id_req *req = (struct vki_mnt_id_req *)(Addr)ARG1;
+   if (!ML_(safe_to_deref) ((void *)&req->size, sizeof(vki_size_t)))
+      PRE_MEM_READ("statmount(req)", ARG1, sizeof(struct vki_mnt_id_req));
+   else
+      PRE_MEM_READ("statmount(req)", ARG1, req->size);
+
+   struct vki_statmount *smbuf = (struct vki_statmount *)(Addr)ARG2;
+   if (!ML_(safe_to_deref) ((void *)&smbuf->size, sizeof(struct vki_statmount)))
+      PRE_MEM_WRITE("statmount(smbuf)", ARG2, sizeof(struct vki_statmount));
+   else
+     PRE_MEM_WRITE("statmount(smbuf)", ARG2, ARG3);
+}
+
+POST(sys_statmount)
+{
+   struct vki_statmount *smbuf = (struct vki_statmount *)(Addr)ARG2;
+   POST_MEM_WRITE((Addr)smbuf, smbuf->size);
+}
+
+PRE(sys_listmount)
+{
+   // int syscall(SYS_listmount, struct mnt_id_req *req,
+   //             uint64_t *mnt_ids, size_t nr_mnt_ids,
+   //             unsigned long flags);
+   FUSE_COMPATIBLE_MAY_BLOCK();
+   PRINT("sys_listmount ( %#" FMT_REGWORD "x, %#" FMT_REGWORD "x, %lu,  %#" FMT_REGWORD "x)", ARG1, ARG2, ARG3, ARG4);
+   PRE_REG_READ4(long, "listmount", struct vki_mnt_id_req *, req, vki_uint64_t *, mnt_ids, vki_size_t, nr_mnt_ids, unsigned long, flags);
+
+   struct vki_mnt_id_req *req = (struct vki_mnt_id_req *)(Addr)ARG1;
+   if (!ML_(safe_to_deref) ((void *)&req->size, sizeof(vki_size_t)))
+      PRE_MEM_READ("listmount(req)", ARG1, sizeof(struct vki_mnt_id_req));
+   else
+      PRE_MEM_READ("listmount(req)", ARG1, req->size);
+
+   PRE_MEM_WRITE("listmount(mnt_ids)", ARG2, ARG3 * sizeof(vki_uint64_t));
+}
+
+POST(sys_listmount)
+{
+   if (RES > 0) {
+      POST_MEM_WRITE(ARG2, RES * sizeof(vki_uint64_t));
+   }
+}
+
+PRE(sys_file_getattr)
+{
+   // SYSCALL_DEFINE5(file_getattr, int, dfd, const char __user *, filename,
+   //                 struct file_attr __user *, ufattr, size_t, usize,
+   //                 unsigned int, at_flags)
+   // in: dfd, filename, at_flags
+   // out: ufattr, usize
+   *flags |= SfMayBlock;
+   PRINT("sys_file_getattr ( %ld, %#" FMT_REGWORD "x(%s), %#"
+          FMT_REGWORD "x, %" FMT_REGWORD "u, %#" FMT_REGWORD "x )" ,
+         SARG1, ARG2, (HChar*)(Addr)ARG2, ARG3, ARG4, ARG5);
+   PRE_REG_READ5(int, "file_getattr", int, dfd, const char*, filename,
+                 struct vki_file_attr *, ufattr, vki_size_t, usize, int, at_flags);
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "file_getattr", tid, status);
+   PRE_MEM_WRITE("file_getattr(ufattr)", ARG3, ARG4);
+}
+
+POST(sys_file_getattr)
+{
+   POST_MEM_WRITE(ARG3, ARG4);
+}
+
+PRE(sys_file_setattr)
+{
+   // SYSCALL_DEFINE5(file_setattr, int, dfd, const char __user *, filename,
+   //                 struct file_attr __user *, ufattr, size_t, usize,
+   //                 unsigned int, at_flags)
+   // in: dfd, filename, ufattr, usize, at_flags
+   *flags |= SfMayBlock;
+   PRINT("sys_file_setattr ( %ld, %#" FMT_REGWORD "x(%s), %#"
+          FMT_REGWORD "x, %" FMT_REGWORD "u, %#" FMT_REGWORD "x )" ,
+         SARG1, ARG2, (HChar*)(Addr)ARG2, ARG3, ARG4, ARG5);
+   PRE_REG_READ5(int, "file_setattr", int, dfd, const char*, filename,
+                 struct vki_file_attr *, ufattr, vki_size_t, usize, int, at_flags);
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "sys_file_setattr", tid, status);
+   PRE_MEM_READ("file_setattr(ufattr)", ARG3, ARG4);
+}
+
+PRE(sys_lsm_get_self_attr)
+{
+   //  * sys_lsm_get_self_attr - Return current task's security module attributes
+   //  * @attr: which attribute to return
+   //  * @ctx: the user-space destination for the information, or NULL
+   //  * @size: pointer to the size of space available to receive the data
+   //  * @flags: special handling options. LSM_FLAG_SINGLE indicates that only
+   //  * attributes associated with the LSM identified in the passed @ctx be
+   //  * reported.
+   // SYSCALL_DEFINE4(lsm_get_self_attr, unsigned int, attr, struct lsm_ctx __user *,
+   //                 ctx, u32 __user *, size, u32, flags)
+   PRINT("sys_lsm_get_self_attr (  %#" FMT_REGWORD "x, %#" FMT_REGWORD "x, %" FMT_REGWORD "u, %#" FMT_REGWORD "x)", ARG1, ARG2, ARG3, ARG4);
+   PRE_REG_READ4(long, "lsm_get_self_attr", unsigned int, attr, struct vki_lsm_ctx *, ctx, __vki_u32 *, size, __vki_u32, flags);
+   if (ML_(safe_to_deref)((__vki_u32 *)ARG3,sizeof(__vki_u32))) {
+      PRE_MEM_READ("lsm_get_self_attr(size)", ARG3, sizeof(__vki_u32));
+      PRE_MEM_READ("lsm_get_self_attr(ctx)", ARG2, *(__vki_u32 *)ARG3);
+   }
+}
+
+POST(sys_lsm_get_self_attr)
+{
+   POST_MEM_WRITE((Addr)ARG3, sizeof(__vki_u32));
+   POST_MEM_WRITE(ARG2, *(__vki_u32 *)ARG3);
+}
+
+PRE(sys_lsm_set_self_attr)
+{
+   //  * sys_lsm_set_self_attr - Set current task's security module attribute
+   //  * @attr: which attribute to set
+   //  * @ctx: the LSM contexts
+   //  * @size: size of @ctx
+   //  * @flags: reserved for future use
+   // SYSCALL_DEFINE4(lsm_set_self_attr, unsigned int, attr, struct lsm_ctx __user *,
+   //                 ctx, u32, size, u32, flags)
+   PRINT("sys_lsm_get_self_attr (  %#" FMT_REGWORD "x, %#" FMT_REGWORD "x, %" FMT_REGWORD "u, %#" FMT_REGWORD "x)", ARG1, ARG2, ARG3, ARG4);
+   PRE_REG_READ4(long, "lsm_set_self_attr", unsigned int, attr, struct vki_lsm_ctx *, ctx, __vki_u32 *, size, __vki_u32, flags);
+   PRE_MEM_READ("lsm_get_self_attr(ctx)", ARG2, ARG3);
+}
+
+PRE(sys_lsm_list_modules)
+{
+   //  * sys_lsm_list_modules - Return a list of the active security modules
+   //  * @ids: the LSM module ids
+   //  * @size: pointer to size of @ids, updated on return
+   //  * @flags: reserved for future use, must be zero
+   // SYSCALL_DEFINE3(lsm_list_modules, u64 __user *, ids, u32 __user *, size,
+   //                 u32, flags)
+   PRINT("sys_lsm_list_modules (  %#" FMT_REGWORD "x, %" FMT_REGWORD "u, %#" FMT_REGWORD "x)", ARG1, ARG2, ARG3);
+   PRE_REG_READ3(long, "lsm_list_modules", __vki_u64 *, ids, __vki_u32 *, size, __vki_u32, flags);
+   PRE_MEM_READ("lsm_list_modules(size)", ARG2, sizeof(__vki_u32));
+   if (ML_(safe_to_deref)((__vki_u32 *)ARG2,sizeof(__vki_u32)))
+      PRE_MEM_READ("lsm_list_modules(ids)", ARG1, *(__vki_u32 *)ARG2);
+}
+
+POST(sys_lsm_list_modules)
+{
+   // No need to POST_MEM_WRITE((Addr)ARG2, sizeof(__vki_u32));
+   // per https://bugs.kde.org/show_bug.cgi?id=513257#c4
+   POST_MEM_WRITE(ARG1, *(__vki_u32 *)ARG2);
+}
+
 PRE(sys_syncfs)
 {
    *flags |= SfMayBlock;
    PRINT("sys_syncfs ( %" FMT_REGWORD "u )", ARG1);
    PRE_REG_READ1(long, "syncfs", unsigned int, fd);
+}
+
+PRE(sys_sysfs)
+{
+   FUSE_COMPATIBLE_MAY_BLOCK();
+   switch (ARG1) {
+      case 1:
+         PRINT("sys_sysfs ( %lu, %lu )", ARG1, ARG2);
+         PRE_REG_READ2(long, "sysfs", int, flags, const void *, path);
+         PRE_MEM_RASCIIZ("sysfs(path)", ARG2);
+         break;
+      case 2:
+         PRINT("sys_sysfs ( %lu, %lu, %#" FMT_REGWORD "x )",
+               ARG1, ARG2, ARG3);
+         PRE_REG_READ3(long, "sysfs", int, flags, int, desc, void *, path);
+         PRE_MEM_WRITE("sysfs(path)", ARG3, 1);
+         break;
+      case 3:
+         PRINT("sys_sysfs ( %lu )", ARG1);
+         PRE_REG_READ1(long, "sysfs", int, flags);
+         break;
+      default:
+         if (VG_(clo_verbosity) >= 1) {
+            VG_(message)(Vg_DebugMsg,
+               "WARNING: unhandled sysfs option %lu\n", ARG1);
+         }
+         break;
+   }
+}
+
+POST(sys_sysfs)
+{
+   if (ARG1 == 2) {
+      // For option 2, getting the fsname, there is no way to know how big the buffer needs to be.
+      POST_MEM_WRITE(ARG3, VG_(strlen)((void *)ARG3));
+   }
 }
 
 PRE(sys_statx)
@@ -4191,8 +4756,12 @@ PRE(sys_statx)
    // in which it passes NULL for both filename and buf, and then looks at the
    // return value, so as to determine whether or not this syscall is supported.
    Bool both_filename_and_buf_are_null = ARG2 == 0 && ARG5 == 0;
+   Bool statx_null_path = (ARG2 == 0) && (ARG3 & VKI_AT_EMPTY_PATH);
    if (!both_filename_and_buf_are_null) {
-      PRE_MEM_RASCIIZ( "statx(filename)", ARG2 );
+      // Since Linux 6.11, the kernel allows passing a NULL filename when
+      // the AT_EMPTY_PATH flag is set.
+      if (!statx_null_path)
+         PRE_MEM_RASCIIZ( "statx(filename)", ARG2 );
       PRE_MEM_WRITE( "statx(buf)", ARG5, sizeof(struct vki_statx) );
    }
 }
@@ -4342,9 +4911,13 @@ PRE(sys_sigaction)
       PRE_MEM_READ( "sigaction(act->sa_handler)", (Addr)&sa->ksa_handler, sizeof(sa->ksa_handler));
       PRE_MEM_READ( "sigaction(act->sa_mask)", (Addr)&sa->sa_mask, sizeof(sa->sa_mask));
       PRE_MEM_READ( "sigaction(act->sa_flags)", (Addr)&sa->sa_flags, sizeof(sa->sa_flags));
+#     if !defined(VGP_riscv64_linux)
+      /* Check the sa_restorer field. More recent Linux platforms completely
+         drop this member. */
       if (ML_(safe_to_deref)(sa,sizeof(struct vki_old_sigaction))
           && (sa->sa_flags & VKI_SA_RESTORER))
          PRE_MEM_READ( "sigaction(act->sa_restorer)", (Addr)&sa->sa_restorer, sizeof(sa->sa_restorer));
+#     endif
    }
 
    if (ARG3 != 0) {
@@ -4412,6 +4985,7 @@ PRE(sys_signalfd)
 }
 POST(sys_signalfd)
 {
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "signalfd", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -4433,6 +5007,7 @@ PRE(sys_signalfd4)
 }
 POST(sys_signalfd4)
 {
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "signalfd4", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -4460,9 +5035,11 @@ PRE(sys_rt_sigaction)
       PRE_MEM_READ( "rt_sigaction(act->sa_handler)", (Addr)&sa->ksa_handler, sizeof(sa->ksa_handler));
       PRE_MEM_READ( "rt_sigaction(act->sa_mask)", (Addr)&sa->sa_mask, sizeof(sa->sa_mask));
       PRE_MEM_READ( "rt_sigaction(act->sa_flags)", (Addr)&sa->sa_flags, sizeof(sa->sa_flags));
+#     if !defined(VGP_riscv64_linux)
       if (ML_(safe_to_deref)(sa,sizeof(vki_sigaction_toK_t))
           && (sa->sa_flags & VKI_SA_RESTORER))
          PRE_MEM_READ( "rt_sigaction(act->sa_restorer)", (Addr)&sa->sa_restorer, sizeof(sa->sa_restorer));
+#     endif
    }
    if (ARG3 != 0)
       PRE_MEM_WRITE( "rt_sigaction(oldact)", ARG3, sizeof(vki_sigaction_fromK_t));
@@ -4473,14 +5050,18 @@ PRE(sys_rt_sigaction)
    if (ARG2 != 0
        && ! ML_(safe_to_deref)((void *)(Addr)ARG2,
                                sizeof(vki_sigaction_toK_t))) {
-      VG_(umsg)("Warning: bad act handler address %p in rt_sigaction()\n",
-                (void *)(Addr)ARG2);
+      if (VG_(clo_verbosity) >= 1) {
+         VG_(umsg)("Warning: bad act handler address %p in rt_sigaction()\n",
+                   (void *)(Addr)ARG2);
+      }
       SET_STATUS_Failure ( VKI_EFAULT );
    } else if ((ARG3 != 0
                && ! ML_(safe_to_deref)((void *)(Addr)ARG3,
                                        sizeof(vki_sigaction_fromK_t)))) {
-      VG_(umsg)("Warning: bad oldact handler address %p in rt_sigaction()\n",
-                (void *)(Addr)ARG3);
+      if (VG_(clo_verbosity) >= 1) {
+         VG_(umsg)("Warning: bad oldact handler address %p in rt_sigaction()\n",
+                   (void *)(Addr)ARG3);
+      }
       SET_STATUS_Failure ( VKI_EFAULT );
    } else {
 
@@ -4520,14 +5101,18 @@ PRE(sys_rt_sigprocmask)
       SET_STATUS_Failure( VKI_EINVAL );
    else if (ARG2 != 0
              && ! ML_(safe_to_deref)((void *)(Addr)ARG2, sizeof(vki_sigset_t))) {
-            VG_(dmsg)("Warning: Bad set handler address %p in sigprocmask\n",
-                      (void *)(Addr)ARG2);
+            if (VG_(clo_verbosity) >= 1) {
+               VG_(dmsg)("Warning: Bad set handler address %p in sigprocmask\n",
+                         (void *)(Addr)ARG2);
+            }
             SET_STATUS_Failure ( VKI_EFAULT );
          }
    else if (ARG3 != 0
              && ! ML_(safe_to_deref)((void *)(Addr)ARG3, sizeof(vki_sigset_t))) {
-            VG_(dmsg)("Warning: Bad oldset address %p in sigprocmask\n",
-                      (void *)(Addr)ARG3);
+            if (VG_(clo_verbosity) >= 1) {
+               VG_(dmsg)("Warning: Bad oldset address %p in sigprocmask\n",
+                         (void *)(Addr)ARG3);
+            }
             SET_STATUS_Failure ( VKI_EFAULT );
          }
 
@@ -5742,31 +6327,91 @@ PRE(sys_openat)
 {
    HChar  name[30];   // large enough
    SysRes sres;
+   Bool   proc_self_exe = False;
+
+   /* Check for /proc/self/exe or /proc/<pid>/exe case
+    * first so that we can then use the later checks. */
+   VG_(sprintf)(name, "/proc/%d/exe", VG_(getpid)());
+   if (ML_(safe_to_deref)( (void*)(Addr)ARG2, 1 )
+       && (VG_(strcmp)((HChar *)(Addr)ARG2, name) == 0
+           || VG_(strcmp)((HChar *)(Addr)ARG2, "/proc/self/exe") == 0)) {
+      proc_self_exe = True;
+   }
 
    if (ARG3 & VKI_O_CREAT) {
       // 4-arg version
       PRINT("sys_openat ( %ld, %#" FMT_REGWORD "x(%s), %ld, %ld )",
             SARG1, ARG2, (HChar*)(Addr)ARG2, SARG3, SARG4);
       PRE_REG_READ4(long, "openat",
-                    int, dfd, const char *, filename, int, flags, int, mode);
+                    int, dirfd, const char *, pathname, int, flags, int, mode);
    } else {
       // 3-arg version
       PRINT("sys_openat ( %ld, %#" FMT_REGWORD "x(%s), %ld )",
             SARG1, ARG2, (HChar*)(Addr)ARG2, SARG3);
       PRE_REG_READ3(long, "openat",
-                    int, dfd, const char *, filename, int, flags);
+                    int, dirfd, const char *, pathname, int, flags);
    }
 
-   PRE_MEM_RASCIIZ( "openat(filename)", ARG2 );
+   PRE_MEM_RASCIIZ( "openat(pathname)", ARG2 );
 
-   /* For absolute filenames, dfd is ignored.  If dfd is AT_FDCWD,
-      filename is relative to cwd.  When comparing dfd against AT_FDCWD,
+   // check that we are not trying to open the client exe for writing
+   if ((ARG3 & VKI_O_WRONLY) ||
+       (ARG3 & VKI_O_RDWR)) {
+      if (proc_self_exe) {
+         SET_STATUS_Failure( VKI_ETXTBSY );
+         return;
+      } else {
+         vg_assert(VG_(resolved_exename));
+         if (!VG_(strncmp)(VG_(resolved_exename), "#!", 2)) {
+            goto no_client_write;
+         }
+         Int fd = ARG1;
+         const HChar* path = (const HChar*)ARG2;
+         if (ML_(safe_to_deref)(path, 1)) {
+            // we need something like a "ML_(safe_to_deref_path)" that does a binary search for the addressable length, and maybe nul
+            if (path[0] == '/') {
+               // ignore fd
+               HChar tmp[VKI_PATH_MAX];
+               if (VG_(realpath)(path, tmp)) {
+                  if (!VG_(strcmp)(tmp, VG_(resolved_exename))) {
+                     SET_STATUS_Failure( VKI_ETXTBSY );
+                     return;
+                  }
+               }
+            } else {
+               if (fd  == VKI_AT_FDCWD) {
+                  HChar tmp[VKI_PATH_MAX];
+                  if (VG_(realpath)(path, tmp)) {
+                     if (!VG_(strcmp)(tmp, VG_(resolved_exename))) {
+                        SET_STATUS_Failure( VKI_ETXTBSY );
+                     }
+                  }
+               } else {
+                  const HChar* dirname;
+                  if (VG_(resolve_filename)(fd, &dirname) == False) {
+                     goto no_client_write; // let the OS do the error handling
+                  }
+                  HChar tmp1[VKI_PATH_MAX];
+                  VG_(snprintf)(tmp1, VKI_PATH_MAX, "%s/%s", dirname, path);
+                  tmp1[VKI_PATH_MAX - 1] = '\0';
+                  HChar tmp2[VKI_PATH_MAX];
+                  if (VG_(realpath)(tmp1, tmp2)) {
+                     if (!VG_(strcmp)(tmp2, VG_(resolved_exename))) {
+                        SET_STATUS_Failure( VKI_ETXTBSY );
+                        return;
+                     }
+                  }
+               }
+            }
+         }
+      }
+   }
+no_client_write:
+
+   /* For absolute filenames, dirfd is ignored.  If dirfd is AT_FDCWD,
+      filename is relative to cwd.  When comparing dirfd against AT_FDCWD,
       be sure only to compare the bottom 32 bits. */
-   if (ML_(safe_to_deref)( (void*)(Addr)ARG2, 1 )
-       && *(Char *)(Addr)ARG2 != '/'
-       && ((Int)ARG1) != ((Int)VKI_AT_FDCWD)
-       && !ML_(fd_allowed)(ARG1, "openat", tid, False))
-      SET_STATUS_Failure( VKI_EBADF );
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "openat", tid, status);
 
    /* Handle the case where the open is of /proc/self/cmdline or
       /proc/<pid>/cmdline, and just give it a copy of the fd for the
@@ -5803,20 +6448,10 @@ PRE(sys_openat)
       return;
    }
 
-   /* And for /proc/self/exe or /proc/<pid>/exe case. */
+   if (proc_self_exe) {
 
-   VG_(sprintf)(name, "/proc/%d/exe", VG_(getpid)());
-   if (ML_(safe_to_deref)( (void*)(Addr)ARG2, 1 )
-       && (VG_(strcmp)((HChar *)(Addr)ARG2, name) == 0 
-           || VG_(strcmp)((HChar *)(Addr)ARG2, "/proc/self/exe") == 0)) {
-      sres = VG_(dup)( VG_(cl_exec_fd) );
-      SET_STATUS_from_SysRes( sres );
-      if (!sr_isError(sres)) {
-         OffT off = VG_(lseek)( sr_Res(sres), 0, VKI_SEEK_SET );
-         if (off < 0)
-            SET_STATUS_Failure( VKI_EMFILE );
-      }
-      return;
+      // do the syscall with VG_(resolved_exename)
+      ARG2 = (Word)VG_(resolved_exename);
    }
 
    /* Otherwise handle normally */
@@ -5826,6 +6461,7 @@ PRE(sys_openat)
 POST(sys_openat)
 {
    vg_assert(SUCCESS);
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "openat", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -5840,6 +6476,7 @@ PRE(sys_mkdirat)
    *flags |= SfMayBlock;
    PRINT("sys_mkdirat ( %ld, %#" FMT_REGWORD "x(%s), %ld )",
          SARG1, ARG2, (HChar*)(Addr)ARG2, SARG3);
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "mkdirat", tid, status);
    PRE_REG_READ3(long, "mkdirat",
                  int, dfd, const char *, pathname, int, mode);
    PRE_MEM_RASCIIZ( "mkdirat(pathname)", ARG2 );
@@ -5847,8 +6484,10 @@ PRE(sys_mkdirat)
 
 PRE(sys_mknodat)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_mknodat ( %ld, %#" FMT_REGWORD "x(%s), 0x%" FMT_REGWORD "x, 0x%"
          FMT_REGWORD "x )", SARG1, ARG2, (HChar*)(Addr)ARG2, ARG3, ARG4 );
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "mknodat", tid, status);
    PRE_REG_READ4(long, "mknodat",
                  int, dfd, const char *, pathname, int, mode, unsigned, dev);
    PRE_MEM_RASCIIZ( "mknodat(pathname)", ARG2 );
@@ -5856,32 +6495,38 @@ PRE(sys_mknodat)
 
 PRE(sys_fchownat)
 {
-   PRINT("sys_fchownat ( %ld, %#" FMT_REGWORD "x(%s), 0x%" FMT_REGWORD "x, 0x%"
-          FMT_REGWORD "x )", SARG1, ARG2, (HChar*)(Addr)ARG2, ARG3, ARG4);
+   FUSE_COMPATIBLE_MAY_BLOCK();
+   PRINT("sys_fchownat ( %" FMT_REGWORD "d, %#" FMT_REGWORD "x(%s), 0x%" FMT_REGWORD "x, 0x%"
+          FMT_REGWORD "x )", SARG1, ARG2, (HChar*)ARG2, ARG3, ARG4);
    PRE_REG_READ4(long, "fchownat",
                  int, dfd, const char *, path,
                  vki_uid_t, owner, vki_gid_t, group);
    PRE_MEM_RASCIIZ( "fchownat(path)", ARG2 );
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "fchownat", tid, status);
 }
 
 PRE(sys_futimesat)
 {
-   PRINT("sys_futimesat ( %ld, %#" FMT_REGWORD "x(%s), %#" FMT_REGWORD "x )",
-         SARG1, ARG2, (HChar*)(Addr)ARG2, ARG3);
+   FUSE_COMPATIBLE_MAY_BLOCK();
+   PRINT("sys_futimesat ( %" FMT_REGWORD "d, %#" FMT_REGWORD "x(%s), %#" FMT_REGWORD "x )",
+         SARG1, ARG2, (HChar*)ARG2, ARG3);
    PRE_REG_READ3(long, "futimesat",
                  int, dfd, char *, filename, struct timeval *, tvp);
    if (ARG2 != 0)
       PRE_MEM_RASCIIZ( "futimesat(filename)", ARG2 );
    if (ARG3 != 0)
       PRE_MEM_READ( "futimesat(tvp)", ARG3, 2 * sizeof(struct vki_timeval) );
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "futimesat", tid, status);
 }
 
 PRE(sys_utimensat)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_utimensat ( %ld, %#" FMT_REGWORD "x(%s), %#" FMT_REGWORD "x, 0x%"
           FMT_REGWORD "x )", SARG1, ARG2, (HChar*)(Addr)ARG2, ARG3, ARG4);
    PRE_REG_READ4(long, "utimensat",
                  int, dfd, char *, filename, struct timespec *, utimes, int, flags);
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "utimensat", tid, status);
    if (ARG2 != 0)
       PRE_MEM_RASCIIZ( "utimensat(filename)", ARG2 );
    if (ARG3 != 0) {
@@ -5907,11 +6552,13 @@ PRE(sys_utimensat)
 
 PRE(sys_utimensat_time64)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_utimensat_time64 ( %ld, %#" FMT_REGWORD "x(%s), %#"
          FMT_REGWORD "x, 0x%" FMT_REGWORD "x )",
          SARG1, ARG2, (HChar*)(Addr)ARG2, ARG3, ARG4);
    PRE_REG_READ4(long, "utimensat_time64",
                  int, dfd, char *, filename, struct timespec *, utimes, int, flags);
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "utimensat_time64", tid, status);
    if (ARG2 != 0)
       PRE_MEM_RASCIIZ( "utimensat_time64(filename)", ARG2 );
    if (ARG3 != 0) {
@@ -5943,6 +6590,7 @@ PRE(sys_newfstatat)
          SARG1, ARG2, (HChar*)(Addr)ARG2, ARG3);
    PRE_REG_READ3(long, "fstatat",
                  int, dfd, char *, file_name, struct stat *, buf);
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "newfstatat", tid, status);
    // See the comment about Rust in PRE(sys_statx). When glibc does support
    // statx rust uses that instead of the system call, but glibc's statx is
    // implemented in terms of fstatat, so the filename being NULL is
@@ -5965,23 +6613,27 @@ PRE(sys_unlinkat)
    PRINT("sys_unlinkat ( %ld, %#" FMT_REGWORD "x(%s) )", SARG1, ARG2,
          (HChar*)(Addr)ARG2);
    PRE_REG_READ2(long, "unlinkat", int, dfd, const char *, pathname);
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "unlinkat", tid, status);
    PRE_MEM_RASCIIZ( "unlinkat(pathname)", ARG2 );
 }
 
 PRE(sys_renameat)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_renameat ( %ld, %#" FMT_REGWORD "x(%s), %ld, %#"
          FMT_REGWORD "x(%s) )", SARG1, ARG2, (HChar*)(Addr)ARG2, SARG3,
          ARG4, (HChar*)(Addr)ARG4);
    PRE_REG_READ4(long, "renameat",
                  int, olddfd, const char *, oldpath,
                  int, newdfd, const char *, newpath);
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "renameat", tid, status);
    PRE_MEM_RASCIIZ( "renameat(oldpath)", ARG2 );
    PRE_MEM_RASCIIZ( "renameat(newpath)", ARG4 );
 }
 
 PRE(sys_renameat2)
 {
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_renameat2 ( %ld, %#" FMT_REGWORD "x(%s), %ld, %#" FMT_REGWORD
          "x(%s), %" FMT_REGWORD "u )", SARG1, ARG2, (HChar*)(Addr)ARG2, SARG3,
          ARG4, (HChar*)(Addr)ARG4, ARG5);
@@ -5989,6 +6641,8 @@ PRE(sys_renameat2)
                  int, olddfd, const char *, oldpath,
                  int, newdfd, const char *, newpath,
                  unsigned int, flags);
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "renameat2(olddirfd)", tid, status);
+   ML_(fd_at_check_allowed)(SARG3, (const HChar*)ARG4, "renameat2(newdirfd)", tid, status);
    PRE_MEM_RASCIIZ( "renameat2(oldpath)", ARG2 );
    PRE_MEM_RASCIIZ( "renameat2(newpath)", ARG4 );
 }
@@ -6003,6 +6657,7 @@ PRE(sys_linkat)
                  int, olddfd, const char *, oldpath,
                  int, newdfd, const char *, newpath,
                  int, flags);
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "linkat", tid, status);
    PRE_MEM_RASCIIZ( "linkat(oldpath)", ARG2);
    PRE_MEM_RASCIIZ( "linkat(newpath)", ARG4);
 }
@@ -6014,21 +6669,24 @@ PRE(sys_symlinkat)
          "x(%s) )", ARG1, (HChar*)(Addr)ARG1, SARG2, ARG3, (HChar*)(Addr)ARG3);
    PRE_REG_READ3(long, "symlinkat",
                  const char *, oldpath, int, newdfd, const char *, newpath);
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "symlinkat", tid, status);
    PRE_MEM_RASCIIZ( "symlinkat(oldpath)", ARG1 );
    PRE_MEM_RASCIIZ( "symlinkat(newpath)", ARG3 );
 }
 
 PRE(sys_readlinkat)
 {
-   HChar name[30];       // large enough
-   Word  saved = SYSNO;
-
+   FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_readlinkat ( %ld, %#" FMT_REGWORD "x(%s), %#" FMT_REGWORD "x, %"
           FMT_REGWORD "u )", SARG1, ARG2, (HChar*)(Addr)ARG2, ARG3, ARG4);
    PRE_REG_READ4(long, "readlinkat",
                  int, dfd, const char *, path, char *, buf, vki_size_t, bufsiz);
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "readlinkat", tid, status);
    PRE_MEM_RASCIIZ( "readlinkat(path)", ARG2 );
    PRE_MEM_WRITE( "readlinkat(buf)", ARG3,ARG4 );
+
+   Bool fuse_may_block = True;
+   HChar name[30];       // large enough
 
    /*
     * Handle the case where readlinkat is looking at /proc/self/exe or
@@ -6038,43 +6696,100 @@ PRE(sys_readlinkat)
    if (ML_(safe_to_deref)((void*)(Addr)ARG2, 1)
        && (VG_(strcmp)((HChar *)(Addr)ARG2, name) == 0
            || VG_(strcmp)((HChar *)(Addr)ARG2, "/proc/self/exe") == 0)) {
-      VG_(sprintf)(name, "/proc/self/fd/%d", VG_(cl_exec_fd));
-      SET_STATUS_from_SysRes( VG_(do_syscall4)(saved, ARG1, (UWord)name, 
-                                                      ARG3, ARG4));
-   } else {
-      /* Normal case */
-      SET_STATUS_from_SysRes( VG_(do_syscall4)(saved, ARG1, ARG2, ARG3, ARG4));
+       HChar* out_name = (HChar*)ARG3;
+       SizeT res = VG_(strlen)(VG_(resolved_exename));
+       res = VG_MIN(res, ARG4);
+       if (ML_(safe_to_deref)(out_name, res)) {
+          VG_(strncpy)(out_name, VG_(resolved_exename), res);
+          SET_STATUS_Success(res);
+       } else {
+          SET_STATUS_Failure(VKI_EFAULT);
+       }
+       fuse_may_block = False;
    }
 
-   if (SUCCESS && RES > 0)
-      POST_MEM_WRITE( ARG3, RES );
+   if (fuse_may_block)
+      FUSE_COMPATIBLE_MAY_BLOCK();
+}
+
+POST(sys_readlinkat)
+{
+   POST_MEM_WRITE( ARG3, RES );
 }
 
 PRE(sys_fchmodat)
 {
-   PRINT("sys_fchmodat ( %ld, %#" FMT_REGWORD "x(%s), %" FMT_REGWORD "u )",
-         SARG1, ARG2, (HChar*)(Addr)ARG2, ARG3);
+   Int arg_1 = (Int) ARG1;
+   const HChar *path = (const HChar*) ARG2;
+   FUSE_COMPATIBLE_MAY_BLOCK();
+   PRINT("sys_fchmodat ( %d, %#" FMT_REGWORD "x(%s), %" FMT_REGWORD "u )",
+         arg_1, ARG2, path, ARG3);
    PRE_REG_READ3(long, "fchmodat",
                  int, dfd, const char *, path, vki_mode_t, mode);
    PRE_MEM_RASCIIZ( "fchmodat(path)", ARG2 );
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "fchmodat", tid, status);
+}
+
+PRE(sys_cachestat)
+{
+    PRINT("sys_cachestat ( %lu, %#lx, %#lx, %lu )", ARG1, ARG2, ARG3, ARG4);
+    PRE_REG_READ4(long, "cachestat",
+                  unsigned long, fd, struct vki_cachestat_range  *, cstat_range,
+                  struct vki_cachestat*, cstat, unsigned long, flags);
+    if (!ML_(fd_allowed)(ARG1, "cachestat", tid, False))
+        SET_STATUS_Failure( VKI_EBADF );
+    const struct vki_cachestat_range *cstat_range = (struct vki_cachestat_range *)(Addr)ARG2;
+    PRE_MEM_READ("cachestat(cstat_range)", ARG2, sizeof(*cstat_range) );
+    const struct vki_cachestat *cstat = (struct vki_cachestat *)(Addr)ARG3;
+    PRE_MEM_WRITE("cachestat(cstat)", ARG3, sizeof(*cstat) );
+}
+
+POST(sys_cachestat)
+{
+    vg_assert(SUCCESS);
+    POST_MEM_WRITE(ARG3, sizeof(struct vki_cachestat));
+}
+
+PRE(sys_fchmodat2)
+{
+   FUSE_COMPATIBLE_MAY_BLOCK();
+   PRINT("sys_fchmodat2 ( %" FMT_REGWORD "d, %#" FMT_REGWORD "x(%s), %" FMT_REGWORD "u, %"
+	  FMT_REGWORD "u )",
+         SARG1, ARG2, (const HChar*)ARG2, ARG3, ARG4);
+   PRE_REG_READ4(long, "fchmodat2",
+                 int, dfd, const char *, path, vki_mode_t, mode,
+                 unsigned int, flags);
+   PRE_MEM_RASCIIZ( "fchmodat2(pathname)", ARG2 );
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "fchmodat2", tid, status);
 }
 
 PRE(sys_faccessat)
 {
-   PRINT("sys_faccessat ( %ld, %#" FMT_REGWORD "x(%s), %ld )",
-         SARG1, ARG2, (HChar*)(Addr)ARG2, SARG3);
+   FUSE_COMPATIBLE_MAY_BLOCK();
+   Int arg_1 = (Int) ARG1;
+   const HChar *path = (const HChar*) ARG2;
+   Int arg_3 = (Int) ARG3;
+   PRINT("sys_faccessat ( %d, %#" FMT_REGWORD "x(%s), %d )",
+         arg_1, ARG2, path, arg_3);
    PRE_REG_READ3(long, "faccessat",
                  int, dfd, const char *, pathname, int, mode);
    PRE_MEM_RASCIIZ( "faccessat(pathname)", ARG2 );
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "faccessat", tid, status);
 }
 
 PRE(sys_faccessat2)
 {
-   PRINT("sys_faccessat2 ( %ld, %#" FMT_REGWORD "x(%s), %ld, %ld )",
-         SARG1, ARG2, (HChar*)(Addr)ARG2, SARG3, SARG4);
+   FUSE_COMPATIBLE_MAY_BLOCK();
+   Int arg_1 = (Int) ARG1;
+   const HChar *path = (const HChar*) ARG2;
+   Int arg_3 = (Int) ARG3;
+   Int arg_4 = (Int) ARG4;
+   PRINT("sys_faccessat2 ( %d, %#" FMT_REGWORD "x(%s), %d, %d )",
+         arg_1, ARG2, path, arg_3, arg_4);
    PRE_REG_READ4(long, "faccessat2",
                  int, dfd, const char *, pathname, int, mode, int, flags);
    PRE_MEM_RASCIIZ( "faccessat2(pathname)", ARG2 );
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "faccessat2", tid, status);
 }
 
 PRE(sys_name_to_handle_at)
@@ -6119,6 +6834,7 @@ PRE(sys_open_by_handle_at)
 POST(sys_open_by_handle_at)
 {
    vg_assert(SUCCESS);
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "open_by_handle_at", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -6692,6 +7408,8 @@ PRE(sys_finit_module)
    PRE_REG_READ3(long, "finit_module",
                  int, fd, const char *, params, int, flags);
    PRE_MEM_RASCIIZ("finit_module(params)", ARG2);
+   if ( !ML_(fd_allowed)(ARG1, "finit_module", tid, False) )
+     SET_STATUS_Failure( VKI_EBADF );
 }
 
 PRE(sys_delete_module)
@@ -6815,7 +7533,8 @@ POST(sys_lookup_dcookie)
 #endif
 
 #if defined(VGP_amd64_linux) || defined(VGP_s390x_linux)        \
-      || defined(VGP_arm64_linux) || defined(VGP_nanomips_linux)
+      || defined(VGP_arm64_linux) || defined(VGP_nanomips_linux) \
+      || defined(VGP_riscv64_linux)
 PRE(sys_lookup_dcookie)
 {
    *flags |= SfMayBlock;
@@ -6848,6 +7567,7 @@ PRE(sys_fcntl)
    case VKI_F_GETSIG:
    case VKI_F_GETLEASE:
    case VKI_F_GETPIPE_SZ:
+   case VKI_F_CREATED_QUERY:
    case VKI_F_GET_SEALS:
       PRINT("sys_fcntl ( %" FMT_REGWORD "u, %" FMT_REGWORD "u )", ARG1, ARG2);
       PRE_REG_READ2(long, "fcntl", unsigned int, fd, unsigned int, cmd);
@@ -6937,8 +7657,9 @@ PRE(sys_fcntl)
    default:
       PRINT("sys_fcntl[UNKNOWN] ( %" FMT_REGWORD "u, %" FMT_REGWORD "u, %"
             FMT_REGWORD "u )", ARG1, ARG2, ARG3);
-      VG_(umsg)("Warning: unimplemented fcntl command: %" FMT_REGWORD "u\n",
-                ARG2);
+      if (VG_(clo_verbosity) >= 1)
+         VG_(umsg)("Warning: unimplemented fcntl command: %" FMT_REGWORD "u\n",
+                   ARG2);
       SET_STATUS_Failure( VKI_EINVAL );
       break;
    }
@@ -6949,12 +7670,26 @@ PRE(sys_fcntl)
    if (ARG2 == VKI_F_SETLKW)
 #  endif
       *flags |= SfMayBlock;
+
+   /* F_GETFD is used to check if a file descriptor is valid, so only
+      make sure it isn't a valgrind fd, otherwise we might warn, with
+      --track-fds=bad for any bad fd.  */
+   if (ARG2 == VKI_F_GETFD) {
+      if (ARG1 >= VG_(fd_soft_limit) ||
+          ARG1 == VG_(log_output_sink).fd ||
+          ARG1 == VG_(xml_output_sink).fd) {
+         SET_STATUS_Failure (VKI_EBADF);
+      }
+   } else if (!ML_(fd_allowed)(ARG1, "fcntl", tid, False)) {
+     SET_STATUS_Failure (VKI_EBADF);
+   }
 }
 
 POST(sys_fcntl)
 {
    vg_assert(SUCCESS);
    if (ARG2 == VKI_F_DUPFD) {
+      POST_newFd_RES;
       if (!ML_(fd_allowed)(RES, "fcntl(DUPFD)", tid, True)) {
          VG_(close)(RES);
          SET_STATUS_Failure( VKI_EMFILE );
@@ -6964,6 +7699,7 @@ POST(sys_fcntl)
       }
    }
    else if (ARG2 == VKI_F_DUPFD_CLOEXEC) {
+      POST_newFd_RES;
       if (!ML_(fd_allowed)(RES, "fcntl(DUPFD_CLOEXEC)", tid, True)) {
          VG_(close)(RES);
          SET_STATUS_Failure( VKI_EMFILE );
@@ -7059,12 +7795,26 @@ PRE(sys_fcntl64)
    if (ARG2 == VKI_F_SETLKW)
 #  endif
       *flags |= SfMayBlock;
+
+   /* F_GETFD is used to check if a file descriptor is valid, so only
+      make sure it isn't a valgrind fd, otherwise we might warn, with
+      --track-fds=bad for any bad fd.  */
+   if (ARG2 == VKI_F_GETFD) {
+      if (ARG1 >= VG_(fd_soft_limit) ||
+          ARG1 == VG_(log_output_sink).fd ||
+          ARG1 == VG_(xml_output_sink).fd) {
+         SET_STATUS_Failure (VKI_EBADF);
+      }
+   } else if (!ML_(fd_allowed)(ARG1, "fcntl64", tid, False)) {
+      SET_STATUS_Failure (VKI_EBADF);
+   }
 }
 
 POST(sys_fcntl64)
 {
    vg_assert(SUCCESS);
    if (ARG2 == VKI_F_DUPFD) {
+      POST_newFd_RES;
       if (!ML_(fd_allowed)(RES, "fcntl64(DUPFD)", tid, True)) {
          VG_(close)(RES);
          SET_STATUS_Failure( VKI_EMFILE );
@@ -7074,6 +7824,7 @@ POST(sys_fcntl64)
       }
    }
    else if (ARG2 == VKI_F_DUPFD_CLOEXEC) {
+      POST_newFd_RES;
       if (!ML_(fd_allowed)(RES, "fcntl64(DUPFD_CLOEXEC)", tid, True)) {
          VG_(close)(RES);
          SET_STATUS_Failure( VKI_EMFILE );
@@ -7217,6 +7968,29 @@ PRE(sys_ioctl)
       PRE_FIELD_READ ("ioctl(SYNC_IOC_MERGE).fd2",   data->fd2);
       PRE_MEM_RASCIIZ("ioctl(SYNC_IOC_MERGE).name",  (Addr)(&data->name[0]));
       PRE_FIELD_WRITE("ioctl(SYNC_IOC_MERGE).fence", data->fence);
+      PRE_FIELD_READ("ioctl(SYNC_IOC_MERGE).flags",  data->flags);
+      break;
+   }
+
+   case VKI_SYNC_IOC_FILE_INFO: {
+      struct vki_sync_file_info* data =
+         (struct vki_sync_file_info*)(Addr)ARG3;
+      PRE_FIELD_READ ("ioctl(SYNC_IOC_FILE_INFO).flags",      data->flags);
+      PRE_FIELD_READ ("ioctl(SYNC_IOC_FILE_INFO).num_fences", data->num_fences);
+      PRE_FIELD_WRITE("ioctl(SYNC_IOC_FILE_INFO).status",     data->status);
+      if (data->num_fences)
+         PRE_MEM_WRITE("ioctl(SYNC_IOC_FILE_INFO).sync_fence_info",
+                       (Addr)data->sync_fence_info,
+                       (data->num_fences
+                        * sizeof(sizeof(struct vki_sync_fence_info))));
+      break;
+   }
+
+   case VKI_SYNC_IOC_SET_DEADLINE: {
+      struct vki_sync_set_deadline* data =
+         (struct vki_sync_set_deadline*)(Addr)ARG3;
+      PRE_FIELD_READ ("ioctl(SYNC_IOC_SET_DEADLINE).deadline_ns",
+                      data->deadline_ns);
       break;
    }
 
@@ -9027,7 +9801,7 @@ PRE(sys_ioctl)
          break;
 
       VG_(memset)(&harrghs, 0, sizeof(harrghs));
-      harrghs.sysno = args->op;
+      harrghs.canonical_sysno = args->op;
       harrghs.arg1 = args->arg[0];
       harrghs.arg2 = args->arg[1];
       harrghs.arg3 = args->arg[2];
@@ -10273,6 +11047,30 @@ PRE(sys_ioctl)
       break;
    }
 
+   case VKI_EVIOCGRAB:
+	/* This just takes an int argument. */
+	break;
+   case VKI_PROCMAP_QUERY: {
+      /* https://www.kernel.org/doc/html/latest/filesystems/proc.html */
+      /* linux source: include/uapi/linux/fs.h:561 */
+      struct vki_procmap_query *pq =
+         (struct vki_procmap_query *)(Addr)ARG3;
+      if (!ML_(safe_to_deref) (pq, sizeof(struct vki_procmap_query)))
+         break;
+      PRE_FIELD_READ("ioctl(PROCMAP_QUERY).size", pq->size);
+      PRE_FIELD_READ("ioctl(PROCMAP_QUERY).query_flags", pq->query_flags);
+      PRE_FIELD_READ("ioctl(PROCMAP_QUERY).query_addr", pq->query_addr);
+      PRE_FIELD_READ("ioctl(PROCMAP_QUERY).vma_name_size", pq->vma_name_size);
+      PRE_FIELD_READ("ioctl(PROCMAP_QUERY).vma_name_addr", pq->vma_name_addr);
+      PRE_FIELD_READ("ioctl(PROCMAP_QUERY).build_id_size", pq->build_id_size);
+      PRE_FIELD_READ("ioctl(PROCMAP_QUERY).build_id_addr", pq->build_id_addr);
+      if (pq->vma_name_size > 0)
+         PRE_MEM_WRITE("ioctl(PROCMAP_QUERY)", (Addr)pq->vma_name_addr, pq->vma_name_size);
+      if (pq->build_id_size > 0)
+         PRE_MEM_WRITE("ioctl(PROCMAP_QUERY)", (Addr)pq->build_id_addr, pq->build_id_size);
+      break;
+   }
+
    default:
       /* EVIOC* are variable length and return size written on success */
       switch (ARG2 & ~(_VKI_IOC_SIZEMASK << _VKI_IOC_SIZESHIFT)) {
@@ -10413,6 +11211,18 @@ POST(sys_ioctl)
       struct vki_sync_merge_data* data =
          (struct vki_sync_merge_data*)(Addr)ARG3;
       POST_FIELD_WRITE(data->fence);
+      if (VG_(clo_track_fds))
+         ML_(record_fd_open_nameless) (tid, data->fence);
+      break;
+   }
+
+   case VKI_SYNC_IOC_FILE_INFO: {
+      struct vki_sync_file_info* data =
+         (struct vki_sync_file_info*)(Addr)ARG3;
+      POST_FIELD_WRITE(data->status);
+      if (data->num_fences > 0 && (Addr)data->sync_fence_info != (Addr)NULL)
+         POST_MEM_WRITE(data->sync_fence_info,
+                        data->num_fences * sizeof(struct vki_sync_fence_info));
       break;
    }
 
@@ -11689,6 +12499,33 @@ POST(sys_ioctl)
       }
       break;
 
+   case VKI_DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD:
+      if (ARG3) {
+         struct vki_drm_syncobj_handle *data =
+            (struct vki_drm_syncobj_handle *)(Addr)ARG3;
+         if (VG_(clo_track_fds))
+            ML_(record_fd_open_nameless) (tid, data->fd);
+      }
+      break;
+
+   case VKI_DRM_IOCTL_PRIME_HANDLE_TO_FD:
+      if (ARG3) {
+         struct vki_drm_prime_handle *data =
+            (struct vki_drm_prime_handle *)(Addr)ARG3;
+         if (VG_(clo_track_fds))
+            ML_(record_fd_open_nameless) (tid, data->fd);
+      }
+      break;
+
+   case VKI_DRM_IOCTL_MODE_CREATE_LEASE:
+      if (ARG3) {
+         struct vki_drm_mode_create_lease *data =
+            (struct vki_drm_mode_create_lease*)(Addr)ARG3;
+         if (VG_(clo_track_fds))
+            ML_(record_fd_open_nameless) (tid, data->fd);
+      }
+      break;
+
    /* KVM ioctls that only write the system call return value */
    case VKI_KVM_GET_API_VERSION:
    case VKI_KVM_CREATE_VM:
@@ -11723,7 +12560,7 @@ POST(sys_ioctl)
           break;
 
        VG_(memset)(&harrghs, 0, sizeof(harrghs));
-       harrghs.sysno = args->op;
+       harrghs.canonical_sysno = args->op;
        harrghs.arg1 = args->arg[0];
        harrghs.arg2 = args->arg[1];
        harrghs.arg3 = args->arg[2];
@@ -12391,6 +13228,20 @@ POST(sys_ioctl)
    case VKI_PTP_ENABLE_PPS:
    case VKI_PTP_PIN_SETFUNC:
       break;
+   case VKI_PROCMAP_QUERY: {
+      /* https://www.kernel.org/doc/html/latest/filesystems/proc.html */
+      /* linux source: include/uapi/linux/fs.h:561 */
+      struct vki_procmap_query *pq =
+         (struct vki_procmap_query *)(Addr)ARG3;
+      if (pq->vma_name_size > 0)
+         POST_MEM_WRITE(pq->vma_name_addr, pq->vma_name_size);
+      if (pq->build_id_size > 0)
+         POST_MEM_WRITE(pq->build_id_addr, pq->build_id_size);
+      /* assume everything is written/defined with POST_MEM_WRITE */
+      /* instead of doing individual POST_FIELD_WRITEs */
+      POST_MEM_WRITE((Addr)pq, pq->size);
+      break;
+   }
 
    default:
       /* EVIOC* are variable length and return size written on success */
@@ -12878,7 +13729,11 @@ PRE(sys_bpf)
             }
             /* Get size of key for this map. */
             if (bpf_map_get_sizes(attr->map_fd, &key_size, &value_size)) {
-               PRE_MEM_READ("bpf(attr->key)", attr->key, key_size);
+               /* see https://bugs.kde.org/show_bug.cgi?id=496571 */
+               /* Key is null when getting first entry in map. */
+               if (attr->key) {
+                  PRE_MEM_READ("bpf(attr->key)", attr->key, key_size);
+               }
                PRE_MEM_WRITE("bpf(attr->next_key)", attr->next_key, key_size);
             }
          }
@@ -13118,6 +13973,7 @@ POST(sys_bpf)
       case VKI_BPF_MAP_GET_FD_BY_ID:
       case VKI_BPF_BTF_GET_FD_BY_ID:
       case VKI_BPF_RAW_TRACEPOINT_OPEN:
+         POST_newFd_RES;
          if (!ML_(fd_allowed)(RES, "bpf", tid, True)) {
             VG_(close)(RES);
             SET_STATUS_Failure(VKI_EMFILE);
@@ -13140,6 +13996,7 @@ POST(sys_bpf)
          break;
       case VKI_BPF_PROG_LOAD:
          /* Return a file descriptor for loaded program, write into log_buf. */
+         POST_newFd_RES;
          if (!ML_(fd_allowed)(RES, "bpf", tid, True)) {
             VG_(close)(RES);
             SET_STATUS_Failure(VKI_EMFILE);
@@ -13168,6 +14025,7 @@ POST(sys_bpf)
          break;
       case VKI_BPF_BTF_LOAD:
          /* Return a file descriptor for BTF data, write into btf_log_buf. */
+         POST_newFd_RES;
          if (!ML_(fd_allowed)(RES, "bpf", tid, True)) {
             VG_(close)(RES);
             SET_STATUS_Failure(VKI_EMFILE);
@@ -13205,12 +14063,12 @@ PRE(sys_copy_file_range)
         ARG4, ARG5, ARG6);
 
   PRE_REG_READ6(vki_size_t, "copy_file_range",
-                int, "fd_in",
-                vki_loff_t *, "off_in",
-                int, "fd_out",
-                vki_loff_t *, "off_out",
-                vki_size_t, "len",
-                unsigned int, "flags");
+                int, fd_in,
+                vki_loff_t *, off_in,
+                int, fd_out,
+                vki_loff_t *, off_out,
+                vki_size_t, len,
+                unsigned int, flags);
 
   /* File descriptors are "specially" tracked by valgrind.
      valgrind itself uses some, so make sure someone didn't
@@ -13233,8 +14091,8 @@ PRE(sys_pkey_alloc)
   PRINT("pkey_alloc (%lu, %lu)", ARG1, ARG2);
 
   PRE_REG_READ2(long, "pkey_alloc",
-                unsigned long, "flags",
-                unsigned long, "access_rights");
+                unsigned long, flags,
+                unsigned long, access_rights);
 
   /* The kernel says: pkey_alloc() is always safe to call regardless of
      whether or not the operating system supports protection keys.  It can be
@@ -13257,11 +14115,25 @@ PRE(sys_pkey_free)
   PRINT("pkey_free (%" FMT_REGWORD "u )", ARG1);
 
   PRE_REG_READ1(long, "pkey_free",
-                unsigned long, "pkey");
+                unsigned long, pkey);
 
   /* Since pkey_alloc () can never succeed, see above, freeing any pkey is
      always an error.  */
   SET_STATUS_Failure( VKI_EINVAL );
+}
+
+PRE(sys_io_pgetevents)
+{
+   PRE_REG_READ5(long, "io_pgetevents",
+                 vki_aio_context_t, ctx_id, long, min_nr, long, nr,
+                 struct io_event *, events,
+                 struct timespec *, timeout);
+   common_pre_io_getevents(tid, ARG1, ARG2, ARG3, ARG4, ARG5, ARG6, flags, "io_pgetevents");
+}
+
+POST(sys_io_pgetevents)
+{
+   common_post_sys_io_events(tid, ARG4, status, "io_pgetevents");
 }
 
 PRE(sys_pkey_mprotect)
@@ -13312,6 +14184,7 @@ PRE(sys_io_uring_setup)
 POST(sys_io_uring_setup)
 {
    vg_assert(SUCCESS);
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "io_uring_setup", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -13326,6 +14199,7 @@ POST(sys_io_uring_setup)
 
 PRE(sys_io_uring_enter)
 {
+   *flags |= SfMayBlock | SfPostOnFail;
    PRINT("sys_io_uring_enter ( %#" FMT_REGWORD "x, %" FMT_REGWORD "u, %"
          FMT_REGWORD "u %" FMT_REGWORD "u, %" FMT_REGWORD "u %"
          FMT_REGWORD "u )",
@@ -13334,12 +14208,14 @@ PRE(sys_io_uring_enter)
                  unsigned int, fd, unsigned int, to_submit,
                  unsigned int, min_complete, unsigned int, flags,
                  const void *, sig, unsigned long, sigsz);
-   if (ARG5)
-      PRE_MEM_READ("io_uring_enter(sig)", ARG5, ARG6);
+   blocking_syscall_sigmask_pre(tid, (Addr *)&ARG5, ARG6,
+                                "io_uring_enter(sig)",
+                                "syswrap.io_uring_enter.1");
 }
 
 POST(sys_io_uring_enter)
 {
+   blocking_syscall_sigmask_post((Addr)ARG5, ARG6);
 }
 
 PRE(sys_io_uring_register)
@@ -13374,7 +14250,7 @@ POST(sys_io_uring_register)
 
 PRE(sys_execveat)
 {
-     PRINT("sys_execveat ( %lu, %#lx(%s), %#lx, %#lx, %lu", ARG1, ARG2, (char*)ARG2, ARG3, ARG4, ARG5);
+   PRINT("sys_execveat ( %lu, %#lx(%s), %#lx, %#lx, %lu", ARG1, ARG2, (char*)ARG2, ARG3, ARG4, ARG5);
    PRE_REG_READ5(vki_off_t, "execveat",
                 int, fd, char *, filename, char **, argv, char **, envp, int, flags);
    PRE_MEM_RASCIIZ( "execveat(filename)", ARG2);
@@ -13384,12 +14260,12 @@ PRE(sys_execveat)
    return;
 #endif
 
+   Int arg_1 = (Int) ARG1;
    const HChar *path = (const HChar*) ARG2;
    Addr arg_2    = ARG3;
    Addr arg_3    = ARG4;
    const HChar   *buf;
    HChar         *abs_path = NULL;
-   Bool check_at_symlink = False;
    Bool check_pathptr = True;
 
    if (ML_(safe_to_deref) (path, 1)) {
@@ -13397,8 +14273,12 @@ PRE(sys_execveat)
         * and just pass the pathname, try to determine
         * the absolute path otherwise. */
        if (path[0] != '/') {
-           /* Check dirfd is a valid fd. */
-           if (!ML_(fd_allowed)(ARG1, "execveat", tid, False)) {
+           /* Check dirfd is a valid fd.
+            * BUT: allow special value of AT_FDCWD (-101) per the execveat(2) man page:
+            *      If pathname is relative and dirfd is the special value AT_FDCWD,
+            *      then pathname is interpreted relative to the current working directory
+            *      of the calling process  (like execve(2)). */
+           if (arg_1 != VKI_AT_FDCWD && !ML_(fd_allowed)(arg_1, "execveat", tid, False)) {
                SET_STATUS_Failure( VKI_EBADF );
                return;
            }
@@ -13406,37 +14286,32 @@ PRE(sys_execveat)
               set then dirfd describes the whole path. */
            if (path[0] == '\0') {
                if (ARG5 & VKI_AT_EMPTY_PATH) {
-                   if (VG_(resolve_filename)(ARG1, &buf)) {
+                   if (VG_(resolve_filename)(arg_1, &buf)) {
                        path = buf;
                        check_pathptr = False;
                    }
                }
-           }
-           else if (ARG1 == VKI_AT_FDCWD) {
-               check_at_symlink = True;
-           } else
-               if (ARG5 & VKI_AT_SYMLINK_NOFOLLOW)
-                   check_at_symlink = True;
-               else if (VG_(resolve_filename)(ARG1, &buf)) {
+           } else if (VG_(resolve_filename)(arg_1, &buf)) {
 		   abs_path = VG_(malloc)("execveat",
                                           (VG_(strlen)(buf) + 1
                                           + VG_(strlen)(path) + 1));
                    VG_(sprintf)(abs_path, "%s/%s", buf, path);
                    path = abs_path;
                    check_pathptr = False;
-               }
-               else
-                   path = NULL;
-           if (check_at_symlink) {
-               struct vg_stat statbuf;
-               SysRes statres;
-
-               statres = VG_(stat)(path, &statbuf);
-               if (sr_isError(statres) || VKI_S_ISLNK(statbuf.mode)) {
-                   SET_STATUS_Failure( VKI_ELOOP );
-                   return;
-               }
            }
+       }
+       if (ARG5 & VKI_AT_SYMLINK_NOFOLLOW) {
+          struct vg_stat statbuf;
+          SysRes statres;
+          statres = VG_(stat)(path, &statbuf);
+          if (sr_isError(statres) || VKI_S_ISLNK(statbuf.mode)) {
+             SET_STATUS_Failure( VKI_ELOOP );
+             return;
+          }
+       }
+       if(ARG5 & ~(VKI_AT_SYMLINK_NOFOLLOW | VKI_AT_EMPTY_PATH)) {
+          SET_STATUS_Failure( VKI_EINVAL );
+          return;
        }
    } else {
        SET_STATUS_Failure(VKI_EFAULT);
@@ -13454,18 +14329,22 @@ PRE(sys_execveat)
 
 PRE(sys_close_range)
 {
-   SysRes res = VG_(mk_SysRes_Success)(0);
-   unsigned int beg, end;
-   unsigned int last = ARG2;
+   UInt first = ARG1;
+   UInt last = ARG2;
+
+   vg_assert(VG_(log_output_sink).fd == -1 ||
+             VG_(log_output_sink).fd >= VG_(fd_hard_limit));
+   vg_assert(VG_(xml_output_sink).fd == -1 ||
+             VG_(xml_output_sink).fd >= VG_(fd_hard_limit));
 
    FUSE_COMPATIBLE_MAY_BLOCK();
    PRINT("sys_close_range ( %" FMT_REGWORD "u, %" FMT_REGWORD "u, %"
          FMT_REGWORD "u )", ARG1, ARG2, ARG3);
    PRE_REG_READ3(long, "close_range",
                  unsigned int, first, unsigned int, last,
-                 unsigned int, flags);
+                 int, flags);
 
-   if (ARG1 > last) {
+   if (first > last) {
       SET_STATUS_Failure( VKI_EINVAL );
       return;
    }
@@ -13473,33 +14352,33 @@ PRE(sys_close_range)
    if (last >= VG_(fd_hard_limit))
       last = VG_(fd_hard_limit) - 1;
 
-   if (ARG1 > last) {
+   if (first > last) {
       SET_STATUS_Success ( 0 );
       return;
    }
 
-   beg = end = ARG1;
-   do {
-      if (end > last
-	  || (end == 2/*stderr*/ && VG_(debugLog_getLevel)() > 0)
-	  || end == VG_(log_output_sink).fd
-	  || end == VG_(xml_output_sink).fd) {
-         /* Split the range if it contains a file descriptor we're not
-          * supposed to close. */
-         if (end - 1 >= beg)
-             res = VG_(do_syscall3)(__NR_close_range, (UWord)beg, (UWord)end - 1, ARG3 );
-         beg = end + 1;
+   if (VG_(debugLog_getLevel)() > 0 &&
+      first <= 2U &&
+      last >= 2U &&
+      first != last) {
+      SysRes res = VG_(mk_SysRes_Success)(0);
+      if (first <= 1U) {
+         res = VG_(do_syscall3)(__NR_close_range, first, 1U, ARG3);
       }
-   } while (end++ <= last);
-
-   /* If it failed along the way, it's presumably the flags being wrong. */
-   SET_STATUS_from_SysRes (res);
+      if (!sr_isError(res) && last >= 3U) {
+         res = VG_(do_syscall3)(__NR_close_range, 3U, last, ARG3);
+      }
+      /* If it failed along the way, it's presumably the flags being wrong. */
+      SET_STATUS_from_SysRes (res);
+   } else {
+      SET_STATUS_from_SysRes(VG_(do_syscall3)(__NR_close_range, first, last, ARG3));
+   }
 }
 
 POST(sys_close_range)
 {
-   unsigned int fd;
-   unsigned int last = ARG2;
+   UInt fd;
+   UInt last = ARG2;
 
    if (!VG_(clo_track_fds)
        || (ARG3 & VKI_CLOSE_RANGE_CLOEXEC) != 0)
@@ -13508,11 +14387,15 @@ POST(sys_close_range)
    if (last >= VG_(fd_hard_limit))
       last = VG_(fd_hard_limit) - 1;
 
-   for (fd = ARG1; fd <= last; fd++)
-      if ((fd != 2/*stderr*/ || VG_(debugLog_getLevel)() == 0)
-	  && fd != VG_(log_output_sink).fd
-	  && fd != VG_(xml_output_sink).fd)
-      ML_(record_fd_close)(fd);
+   /* If the close_range range is too wide, we don't want to loop
+      through the whole range.  */
+   if (ARG2 >= VG_(fd_hard_limit))
+     ML_(record_fd_close_range)(tid, ARG1);
+   else {
+     for (fd = ARG1; fd <= last; fd++)
+       if ((fd != 2/*stderr*/ || VG_(debugLog_getLevel)() == 0))
+         ML_(record_fd_close)(tid, fd);
+   }
 }
 
 
@@ -13526,42 +14409,105 @@ PRE(sys_openat2)
 {
    HChar  name[30];   // large enough
    SysRes sres;
-   struct vki_open_how * how;
+   struct vki_open_how* how = (struct vki_open_how *)ARG3;
+   Bool   proc_self_exe = False;
+   Bool   can_deref_how = how && ML_(safe_to_deref)(how, sizeof(*how));
+
+   // ARG4 is supposed to be sizeof(struct vki_open_how)
+   // but we can't trust it
+   if (can_deref_how) {
+      // check that we are not trying to open the client exe for writing
+      // this doesn't handle all of the RESOLVE options, there may be cases
+      // like RESOLVE_NO_XDEV and RESOLVE_BENEATH where the path is
+      // invalid and we might return the wrong errno
+      if (how->vki_resolve != VKI_RESOLVE_IN_ROOT &&
+          how->vki_resolve != VKI_RESOLVE_NO_MAGICLINKS) {
+         /* Check for /proc/self/exe or /proc/<pid>/exe case
+          * first so that we can then use the later checks. */
+         VG_(sprintf)(name, "/proc/%d/exe", VG_(getpid)());
+         if (ML_(safe_to_deref)( (void*)(Addr)ARG2, 1 )
+             && (VG_(strcmp)((HChar *)(Addr)ARG2, name) == 0
+                 || VG_(strcmp)((HChar *)(Addr)ARG2, "/proc/self/exe") == 0)) {
+            proc_self_exe = True;
+         }
+      }
+   }
 
    PRINT("sys_openat2 ( %ld, %#" FMT_REGWORD "x(%s), %#" FMT_REGWORD "x, %ld )",
             SARG1, ARG2, (HChar*)(Addr)ARG2, ARG3, SARG4);
    PRE_REG_READ4(long, "openat2",
-                    int, dfd, const char *, filename, struct vki_open_how *, how, vki_size_t, size);
+                    int, dirfd, const char *, pathname, struct vki_open_how *, how, vki_size_t, size);
 
-   PRE_MEM_RASCIIZ( "openat2(filename)", ARG2 );
+   PRE_MEM_RASCIIZ( "openat2(pathname)", ARG2 );
    PRE_MEM_READ( "openat2(how)", ARG3, sizeof(struct vki_open_how));
 
-   /* For absolute filenames, dfd is ignored.  If dfd is AT_FDCWD,
-      filename is relative to cwd.  When comparing dfd against AT_FDCWD,
-      be sure only to compare the bottom 32 bits. */
-   if (ML_(safe_to_deref)( (void*)(Addr)ARG2, 1 )
-       && *(Char *)(Addr)ARG2 != '/'
-       && ((Int)ARG1) != ((Int)VKI_AT_FDCWD)
-       && !ML_(fd_allowed)(ARG1, "openat2", tid, False))
-      SET_STATUS_Failure( VKI_EBADF );
-
-   how = (struct vki_open_how *)ARG3;
-
-   if (how && ML_(safe_to_deref) (how, sizeof(struct vki_open_how))) {
-      if (how->vki_mode) {
-         if (!(how->vki_flags & ((vki_uint64_t)VKI_O_CREAT | VKI_O_TMPFILE))) {
-            SET_STATUS_Failure( VKI_EINVAL );
+   if (can_deref_how &&
+       ((how->vki_flags & VKI_O_WRONLY) ||
+       (how->vki_flags & VKI_O_RDWR))) {
+      if (proc_self_exe) {
+         SET_STATUS_Failure( VKI_ETXTBSY );
+         return;
+      } else {
+         vg_assert(VG_(resolved_exename));
+         if (!VG_(strncmp)(VG_(resolved_exename), "#!", 2)) {
+            goto no_client_write;
+         }
+         Int fd = ARG1;
+         const HChar* path = (const HChar*)ARG2;
+         if (ML_(safe_to_deref)(path, 1)) {
+            // we need something like a "ML_(safe_to_deref_path)" that does a binary search for the addressable length, and maybe nul
+            if (path[0] == '/' && how->vki_resolve != VKI_RESOLVE_IN_ROOT) {
+               // absolute path, ignore fd
+               HChar tmp[VKI_PATH_MAX];
+               if (VG_(realpath)(path, tmp)) {
+                  if (!VG_(strcmp)(tmp, VG_(resolved_exename))) {
+                     SET_STATUS_Failure( VKI_ETXTBSY );
+                     return;
+                  }
+               }
+            } else {
+               // relative or rooted path
+               // or RESOLVE_IN_ROOT
+               if (how->vki_resolve == VKI_RESOLVE_IN_ROOT) {
+                  while (*path == '/' && *path != '\0') {
+                     ++path;
+                  }
+               }
+               if (fd  == VKI_AT_FDCWD) {
+                  HChar tmp[VKI_PATH_MAX];
+                  if (VG_(realpath)(path, tmp)) {
+                     if (!VG_(strcmp)(tmp, VG_(resolved_exename))) {
+                        SET_STATUS_Failure( VKI_ETXTBSY );
+                        return;
+                     }
+                  }
+               } else {
+                  // build absolute path from fd and path
+                  const HChar* dirname;
+                  if (VG_(resolve_filename)(fd, &dirname) == False) {
+                     goto no_client_write; // let the OS do the error handling
+                  }
+                  HChar tmp1[VKI_PATH_MAX];
+                  VG_(snprintf)(tmp1, VKI_PATH_MAX, "%s/%s", dirname, path);
+                  tmp1[VKI_PATH_MAX - 1] = '\0';
+                  HChar tmp2[VKI_PATH_MAX];
+                  if (VG_(realpath)(tmp1, tmp2)) {
+                     if (!VG_(strcmp)(tmp2, VG_(resolved_exename))) {
+                        SET_STATUS_Failure( VKI_ETXTBSY );
+                        return;
+                     }
+                  }
+               }
+            }
          }
       }
-      if (how->vki_resolve & ~((vki_uint64_t)VKI_RESOLVE_NO_XDEV |
-                            VKI_RESOLVE_NO_MAGICLINKS |
-                            VKI_RESOLVE_NO_SYMLINKS |
-                            VKI_RESOLVE_BENEATH |
-                            VKI_RESOLVE_IN_ROOT |
-                            VKI_RESOLVE_CACHED)) {
-          SET_STATUS_Failure( VKI_EINVAL );
-      }
    }
+ no_client_write:
+
+   /* For absolute filenames, dirfd is ignored.  If dirfd is AT_FDCWD,
+      filename is relative to cwd.  When comparing dirfd against AT_FDCWD,
+      be sure only to compare the bottom 32 bits. */
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "openat2", tid, status);
 
    /* Handle the case where the open is of /proc/self/cmdline or
       /proc/<pid>/cmdline, and just give it a copy of the fd for the
@@ -13598,20 +14544,9 @@ PRE(sys_openat2)
       return;
    }
 
-   /* And for /proc/self/exe or /proc/<pid>/exe case. */
-
-   VG_(sprintf)(name, "/proc/%d/exe", VG_(getpid)());
-   if (ML_(safe_to_deref)( (void*)(Addr)ARG2, 1 )
-       && (VG_(strcmp)((HChar *)(Addr)ARG2, name) == 0
-           || VG_(strcmp)((HChar *)(Addr)ARG2, "/proc/self/exe") == 0)) {
-      sres = VG_(dup)( VG_(cl_exec_fd) );
-      SET_STATUS_from_SysRes( sres );
-      if (!sr_isError(sres)) {
-         OffT off = VG_(lseek)( sr_Res(sres), 0, VKI_SEEK_SET );
-         if (off < 0)
-            SET_STATUS_Failure( VKI_EMFILE );
-      }
-      return;
+   if (proc_self_exe) {
+      // do the syscall with VG_(resolved_exename)
+      ARG2 = (Word)VG_(resolved_exename);
    }
 
    /* Otherwise handle normally */
@@ -13621,6 +14556,7 @@ PRE(sys_openat2)
 POST(sys_openat2)
 {
    vg_assert(SUCCESS);
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "openat2", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -13637,6 +14573,7 @@ PRE(sys_pidfd_open)
 
 POST(sys_pidfd_open)
 {
+   POST_newFd_RES;
    if (!ML_(fd_allowed)(RES, "pidfd", tid, True)) {
       VG_(close)(RES);
       SET_STATUS_Failure( VKI_EMFILE );
@@ -13644,6 +14581,201 @@ POST(sys_pidfd_open)
       if (VG_(clo_track_fds))
          ML_(record_fd_open_nameless) (tid, RES);
    }
+}
+
+PRE(sys_pidfd_getfd)
+{
+   PRINT("sys_pidfd_getfd ( %ld, %ld, %ld )", SARG1, SARG2, SARG3);
+   PRE_REG_READ3(long, "pidfd_getfd", int, pidfd, int, targetfd, unsigned int, flags);
+}
+
+POST(sys_pidfd_getfd)
+{
+   vg_assert(SUCCESS);
+   POST_newFd_RES;
+   if (!ML_(fd_allowed)(RES, "pidfd_getfd", tid, True)) {
+      VG_(close)(RES);
+      SET_STATUS_Failure( VKI_EMFILE );
+   } else {
+      if (VG_(clo_track_fds))
+         ML_(record_fd_open_nameless) (tid, RES);
+   }
+}
+
+/* int open_tree (int dfd, const char *filename, unsigned int flags)  */
+PRE(sys_open_tree)
+{
+   PRINT("sys_open_tree ( %ld, %#" FMT_REGWORD "x(%s), %ld",
+         SARG1, ARG2, (HChar*)(Addr)ARG2, SARG3);
+   PRE_REG_READ3(long, "open_tree",
+                 int, dfd, const char *, filename, int, flags);
+   PRE_MEM_RASCIIZ( "open_tree(filename)", ARG2);
+   /* For absolute filenames, dfd is ignored.  If dfd is AT_FDCWD,
+      filename is relative to cwd.  When comparing dfd against AT_FDCWD,
+      be sure only to compare the bottom 32 bits. */
+   if (ML_(safe_to_deref)( (void*)(Addr)ARG2, 1 )
+       && *(Char *)(Addr)ARG2 != '/'
+       && ((Int)ARG1) != ((Int)VKI_AT_FDCWD)
+       && !ML_(fd_allowed)(ARG1, "open_tree", tid, False))
+      SET_STATUS_Failure( VKI_EBADF );
+}
+
+POST(sys_open_tree)
+{
+   POST_newFd_RES;
+   if (!ML_(fd_allowed)(RES, "open_tree", tid, True)) {
+      VG_(close)(RES);
+      SET_STATUS_Failure( VKI_EMFILE );
+   } else {
+      if (VG_(clo_track_fds))
+         ML_(record_fd_open_with_given_name)(tid, RES, (HChar*)(Addr)ARG2);
+   }
+}
+
+/* int move_mount (int from_dfd, const char *from_pathname,
+                   int to_dfd, const char *to_pathname,
+                   unsigned int flags)  */
+PRE(sys_move_mount)
+{
+   PRINT("sys_move_mount ( %ld, %#" FMT_REGWORD "x(%s), "
+         "%ld, %#" FMT_REGWORD "x(%s), %ld",
+         SARG1, ARG2, (HChar*)(Addr)ARG2,
+         SARG3, ARG4, (HChar*)(Addr)ARG4, SARG5);
+   PRE_REG_READ5(long, "move_mount",
+                 int, from_dfd, const char *, from_pathname,
+                 int, to_dfd, const char*, to_pathname, int, flags);
+   PRE_MEM_RASCIIZ( "move_mount(from_pathname)", ARG2);
+   /* For absolute filenames, from_dfd is ignored.  If from_dfd is AT_FDCWD,
+      from_pathname is relative to cwd.  When comparing from_dfd against
+      AT_FDCWD, be sure only to compare the bottom 32 bits. */
+   ML_(fd_at_check_allowed)(SARG1, (const HChar*)ARG2, "move_mount(from_dfd)", tid, status);
+   PRE_MEM_RASCIIZ( "move_mount(to_pathname)", ARG4);
+   /* For absolute filenames, to_dfd is ignored.  If to_dfd is AT_FDCWD,
+      to_pathname is relative to cwd.  When comparing to_dfd against
+      AT_FDCWD, be sure only to compare the bottom 32 bits. */
+   ML_(fd_at_check_allowed)(SARG3, (const HChar*)ARG4, "move_mount(to_dfd)", tid, status);
+}
+
+/* int fsopen (const char *fs_name, unsigned int flags)  */
+PRE(sys_fsopen)
+{
+   PRINT("sys_fsopen ( %#" FMT_REGWORD "x(%s), %ld",
+         ARG1, (HChar*)(Addr)ARG1, SARG2);
+   PRE_REG_READ2(long, "fsopen", const char *, fs_name, int, flags);
+   PRE_MEM_RASCIIZ( "fsopen(filename)", ARG1);
+}
+
+POST(sys_fsopen)
+{
+   POST_newFd_RES;
+   if (!ML_(fd_allowed)(RES, "fsopen", tid, True)) {
+      VG_(close)(RES);
+      SET_STATUS_Failure( VKI_EMFILE );
+   } else {
+      if (VG_(clo_track_fds))
+         ML_(record_fd_open_with_given_name)(tid, RES, (HChar*)(Addr)ARG1);
+   }
+}
+
+/* int fsmount (int fd, unsigned int flags, unsigned int ms_flags)  */
+PRE(sys_fsmount)
+{
+   PRINT("sys_fsmount ( %ld, %ld, %ld", SARG1, SARG2, SARG3);
+   PRE_REG_READ3(long, "fsmount", int, fd, int, flags, int, ms_flags);
+   if (!ML_(fd_allowed)(ARG1, "fsmount", tid, False))
+      SET_STATUS_Failure( VKI_EBADF );
+}
+
+POST(sys_fsmount)
+{
+   POST_newFd_RES;
+   if (!ML_(fd_allowed)(RES, "fsmount", tid, True)) {
+      VG_(close)(RES);
+      SET_STATUS_Failure( VKI_EMFILE );
+   } else {
+      if (VG_(clo_track_fds))
+         ML_(record_fd_open_nameless)(tid, RES);
+   }
+}
+
+/* int fsconfig (int fd, unsigned int cmd, const char *key,
+                 const void *value, int aux)  */
+PRE(sys_fsconfig)
+{
+   PRINT("sys_fsconfig ( %ld, %ld, %#" FMT_REGWORD "x(%s), "
+         "%#" FMT_REGWORD "x, %ld )",
+         SARG1, SARG2, ARG3, (HChar*)(Addr)ARG3, ARG4, SARG6);
+   PRE_REG_READ5(long, "fsconfig", int, fd, int, cmd,
+                 const char *, key, const void *, value, int, aux);
+   if (ARG3)
+      PRE_MEM_RASCIIZ( "fsconfig(key)", ARG3);
+   if (!ML_(fd_allowed)(ARG1, "fsconfig", tid, False))
+      SET_STATUS_Failure( VKI_EBADF );
+   /* XXX we could also check the value based on the cmd FSCONFIG_...  */
+}
+
+/* int fspick (int dfd, const char *path, unsigned int flags)  */
+PRE(sys_fspick)
+{
+   PRINT("sys_fspick ( %ld, %#" FMT_REGWORD "x(%s), %ld",
+         SARG1, ARG2, (HChar*)(Addr)ARG2, SARG3);
+   PRE_REG_READ3(long, "fspick",
+                 int, dfd, const char *, filename, int, flags);
+   PRE_MEM_RASCIIZ( "fspick(path)", ARG2);
+   /* For absolute filenames, dfd is ignored.  If dfd is AT_FDCWD,
+      path is relative to cwd.  When comparing dfd against AT_FDCWD,
+      be sure only to compare the bottom 32 bits. */
+   if (ML_(safe_to_deref)( (void*)(Addr)ARG2, 1 )
+       && *(Char *)(Addr)ARG2 != '/'
+       && ((Int)ARG1) != ((Int)VKI_AT_FDCWD)
+       && !ML_(fd_allowed)(ARG1, "fspick", tid, False))
+      SET_STATUS_Failure( VKI_EBADF );
+}
+
+POST(sys_fspick)
+{
+   POST_newFd_RES;
+   if (!ML_(fd_allowed)(RES, "fspick", tid, True)) {
+      VG_(close)(RES);
+      SET_STATUS_Failure( VKI_EMFILE );
+   } else {
+      if (VG_(clo_track_fds))
+         ML_(record_fd_open_with_given_name)(tid, RES, (HChar*)(Addr)ARG2);
+   }
+}
+
+/* int syscall(SYS_userfaultfd, int flags); */
+
+PRE(sys_userfaultfd)
+{
+   PRINT("sys_userfaultfd ( %ld )", SARG1);
+   PRE_REG_READ1(long, "userfaultfd", int, size);
+}
+
+POST(sys_userfaultfd)
+{
+   vg_assert(SUCCESS);
+   POST_newFd_RES;
+   if (!ML_(fd_allowed)(RES, "userfaultfd", tid, True)) {
+      VG_(close)(RES);
+      SET_STATUS_Failure( VKI_EMFILE );
+   } else {
+      if (VG_(clo_track_fds))
+         ML_(record_fd_open_nameless)(tid, RES);
+   }
+}
+
+PRE(sys_ustat)
+{
+   FUSE_COMPATIBLE_MAY_BLOCK();
+   PRINT("sys_ustat ( %#" FMT_REGWORD "x, %#" FMT_REGWORD "x)", ARG1, ARG2);
+   PRE_REG_READ2(long, "ustat", __vki_u32, dev, struct vki_ustat *, ubuf);
+   PRE_MEM_WRITE( "ustat(ubuf)", ARG2, sizeof(struct vki_ustat) );
+}
+
+POST(sys_ustat)
+{
+   POST_MEM_WRITE( ARG2, sizeof(struct vki_ustat) );
 }
 
 #undef PRE

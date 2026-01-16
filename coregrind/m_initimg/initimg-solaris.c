@@ -13,7 +13,7 @@
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
-   published by the Free Software Foundation; either version 2 of the
+   published by the Free Software Foundation; either version 3 of the
    License, or (at your option) any later version.
 
    This program is distributed in the hope that it will be useful, but
@@ -65,7 +65,6 @@ static void load_client(/*OUT*/ExeInfo *info,
 {
    const HChar *exe_name;
    Int ret;
-   SysRes res;
 
    vg_assert(VG_(args_the_exename));
    exe_name = VG_(find_executable)(VG_(args_the_exename));
@@ -95,12 +94,15 @@ static void load_client(/*OUT*/ExeInfo *info,
       /*NOTREACHED*/
    }
    VG_(strcpy)(out_exe_name, exe_name);
-
-   /* Get hold of a file descriptor which refers to the client executable.
-      This is needed for attaching to GDB. */
-   res = VG_(open)(exe_name, VKI_O_RDONLY, VKI_S_IRUSR);
-   if (!sr_isError(res))
-      VG_(cl_exec_fd) = sr_Res(res);
+   if (VG_(resolved_exename) == NULL) {
+      HChar interp_name[VKI_PATH_MAX];
+      if (VG_(try_get_interp)(exe_name, interp_name, VKI_PATH_MAX)) {
+         exe_name = interp_name;
+      }
+      HChar resolved_name[VKI_PATH_MAX];
+      VG_(realpath)(exe_name, resolved_name);
+      VG_(resolved_exename) = VG_(strdup)("initimg-solaris.lc.1", resolved_name);
+   }
 
    /* Set initial brk values. */
    if (info->ldsoexec) {
